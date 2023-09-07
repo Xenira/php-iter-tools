@@ -2,7 +2,7 @@
   "name": "xenira/iter-tools",
   "description": "Library to make iterator pattern less cumbersome in php",
   "type": "library",
-  "license": "MPL 2.0",
+  "license": "MPL-2.0",
   "autoload": {
     "psr-4": {
       "Xenira\\IterTools\\": "src/"

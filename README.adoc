@@ -1,0 +1,24 @@
+= PHP Iter Tools
+:toc: left
+:toclevels: 2
+:sectnums:
+:icons: font
+:source-highlighter: highlightjs
+
+Simple PHP library for making working with iterators more fun.
+
+Heavily inspired by rust's iterators.
+
+Currently not all methods are implemented, but the most important ones are. Use with caution.
+
+== Usage
+
+```php
+$iterator = new ArrayIterator([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+$iterator = $iterator
+    ->filter(fn ($value) => $value % 2 === 0)
+    ->map(fn ($value) => $value * 2)
+    ->take(4);
+
+assert($iterator->collect() === [4, 8, 12, 16]);
+```

@@ -1,0 +1,20 @@
+{
+  "name": "xenira/iter-tools",
+  "description": "Library to make iterator pattern less cumbersome in php",
+  "type": "library",
+  "license": "MPL 2.0",
+  "autoload": {
+    "psr-4": {
+      "Xenira\\IterTools\\": "src/"
+    }
+  },
+  "authors": [
+    {
+      "name": "Xenira",
+      "email": "1288524+Xenira@users.noreply.github.com"
+    }
+  ],
+  "require-dev": {
+    "phpunit/phpunit": "^10.3"
+  }
+}

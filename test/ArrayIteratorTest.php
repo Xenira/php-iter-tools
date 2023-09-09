@@ -5,8 +5,11 @@ namespace Xenira\IterTools;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
-class ArrayIteratorTest extends TestCase {
-    /** @var ArrayIterator<int> */
+class ArrayIteratorTest extends TestCase
+{
+    /**
+     * @var ArrayIterator<int>
+     */
     private ArrayIterator $iterator;
 
     public function setUp(): void
@@ -228,7 +231,11 @@ class ArrayIteratorTest extends TestCase {
     public function testInspect(): void
     {
         $count = 0;
-        $iterator = $this->iterator->inspect(function ($x) use (&$count) { $count += $x; });
+        $iterator = $this->iterator->inspect(
+            function ($x) use (&$count) {
+                $count += $x;
+            }
+        );
 
         $this->assertEquals(0, $count);
         $this->assertEquals([1, 2, 3, 4, 5], $iterator->collect());

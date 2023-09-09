@@ -7,8 +7,8 @@ use Xenira\IterTools\Iter;
 /**
  * Class Take
  *
- * @package Xenira\IterTools\Iter
- * @template T
+ * @package          Xenira\IterTools\Iter
+ * @template         T
  * @template-extends Iter<T>
  */
 class Take extends Iter
@@ -17,7 +17,7 @@ class Take extends Iter
      * Take constructor.
      *
      * @param Iter<T> $iterator
-     * @param int $n
+     * @param int     $n
      */
     public function __construct(Iter $iterator, private int $n)
     {

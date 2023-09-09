@@ -8,9 +8,9 @@ use Xenira\IterTools\Iter;
 /**
  * Class Map
  *
- * @package Xenira\IterTools\Iter
- * @template T
- * @template U
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template         U
  * @template-extends Iter<T>
  */
 class Map extends Iter
@@ -20,7 +20,7 @@ class Map extends Iter
     /**
      * Map constructor.
      *
-     * @param Iter<T> $iterator
+     * @param Iter<T>        $iterator
      * @param callable(T): U $callback
      */
     public function __construct(Iter $iterator, callable $callback)

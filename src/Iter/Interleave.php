@@ -10,7 +10,7 @@ use Xenira\IterTools\Iter;
  *
  * @package Xenira\IterTools\Iter
  *
- * @template T
+ * @template         T
  * @template-extends Iter<Iter<T>>
  */
 class Interleave extends Iter

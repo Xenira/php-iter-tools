@@ -8,8 +8,8 @@ use Xenira\IterTools\Iter;
 /**
  * Class TakeWhile
  *
- * @package Xenira\IterTools\Iter
- * @template T
+ * @package          Xenira\IterTools\Iter
+ * @template         T
  * @template-extends Iter<T>
  */
 class TakeWhile extends Iter
@@ -21,7 +21,7 @@ class TakeWhile extends Iter
     /**
      * TakeWhile constructor.
      *
-     * @param Iter<T> $iterator
+     * @param Iter<T>           $iterator
      * @param callable(T): bool $callback
      */
     public function __construct(Iter $iterator, callable $callback)

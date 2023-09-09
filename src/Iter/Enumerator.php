@@ -7,8 +7,8 @@ use Xenira\IterTools\Iter;
 /**
  * Class Enumerator
  *
- * @package Xenira\IterTools\Iter
- * @template T
+ * @package          Xenira\IterTools\Iter
+ * @template         T
  * @template-extends Iter<T>
  */
 class Enumerator extends Iter
@@ -51,7 +51,7 @@ class Enumerator extends Iter
     }
 
     /**
-     * @param int $n
+     * @param  int $n
      * @return Iter<T>
      */
     public function skip(int $n): Iter

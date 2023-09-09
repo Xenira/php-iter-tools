@@ -10,7 +10,7 @@ use Xenira\IterTools\Iter;
  *
  * @package Xenira\IterTools\Iter
  *
- * @template T
+ * @template         T
  * @template-extends Iter<Iter<T>>
  */
 class Chain extends Iter
@@ -74,7 +74,8 @@ class Chain extends Iter
 
     public function rewind(): void
     {
-        // TODO: Evaluate if this is a good idea. It would be nice to be able to rewind the chain iterator, but it would be a bit tricky to implement efficiently.
+        // TODO: Evaluate if this is a good idea. It would be nice to be able to rewind the chain iterator,
+        //       but it would be a bit tricky to implement efficiently.
         throw new \BadMethodCallException('Chain iterator cannot be rewound');
     }
 }

@@ -33,4 +33,4 @@ jobs:
       - name: PHP Code Sniffer
         uses: php-actions/phpcs@v1
         with:
-          path: src/
+          standard: phpcs.xml

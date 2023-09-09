@@ -7,13 +7,15 @@ use Xenira\IterTools\Iter;
 /**
  * Class ArrayIterator
  *
- * @package Xenira\IterTools
- * @template T
+ * @package          Xenira\IterTools
+ * @template         T
  * @template-extends Iter<T>
  */
 class ArrayIterator extends Iter
 {
-    /** @var T[] */
+    /**
+     * @var T[]
+     */
     private $array;
 
     /**
@@ -55,7 +57,7 @@ class ArrayIterator extends Iter
     }
 
     /**
-     * @param int $n
+     * @param  int $n
      * @return Iter<T>
      */
     public function skip(int $n): Iter

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 
 namespace Xenira\IterTools\Iter;
 
@@ -10,8 +12,8 @@ use Xenira\IterTools\Iter;
 /**
  * Class Flatten
  *
- * @package Xenira\IterTools\Iter
- * @template T
+ * @package          Xenira\IterTools\Iter
+ * @template         T
  * @template-extends Iter<Iterator<T>|T[]>
  */
 class Flatten extends Iter

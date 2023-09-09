@@ -15,7 +15,7 @@ use Xenira\IterTools\Iter\TakeWhile;
 use Xenira\IterTools\Iter\Zip;
 
 /**
- * @template T
+ * @template   T
  * @implements Iterator<T>
  */
 abstract class Iter implements Iterator
@@ -25,30 +25,34 @@ abstract class Iter implements Iterator
     /**
      * @param Iterator<T> $iterator
      */
-    protected function  __construct(private Iterator $iterator) {
+    protected function __construct(private Iterator $iterator)
+    {
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return Filter<T>
      */
-    public function filter(callable $callback): Filter {
+    public function filter(callable $callback): Filter
+    {
         return new Filter($this, $callback);
     }
     /**
      * @template U
-     * @param callable(T): U $callback
-     * @return Map<T, U>
+     * @param    callable(T): U $callback
+     * @return   Map<T, U>
      */
-    public function map(callable $callback): Map {
+    public function map(callable $callback): Map
+    {
         return new Map($this, $callback);
     }
     /**
      * @template U
-     * @param callable(U, T): U $callback
-     * @param U $initial
+     * @param    callable(U, T): U $callback
+     * @param    U                 $initial
      */
-    public function reduce(callable $callback, $initial): mixed {
+    public function reduce(callable $callback, $initial): mixed
+    {
         while ($this->valid()) {
             $current = $this->current();
             assert($current !== null);
@@ -62,22 +66,25 @@ abstract class Iter implements Iterator
     /**
      * @return Take<T>
      */
-    public function take(int $n): Take {
+    public function take(int $n): Take
+    {
         return new Take($this, $n);
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return TakeWhile<T>
      */
-    public function takeWhile(callable $callback): TakeWhile {
+    public function takeWhile(callable $callback): TakeWhile
+    {
         return new TakeWhile($this, $callback);
     }
 
     /**
      * @return Iter<T>
      */
-    public function skip(int $n): Iter {
+    public function skip(int $n): Iter
+    {
         $this->validateSkip($n);
 
         while ($n > 0) {
@@ -88,17 +95,19 @@ abstract class Iter implements Iterator
         return $this;
     }
 
-    protected function validateSkip(int $n): void {
+    protected function validateSkip(int $n): void
+    {
         if ($n < 0) {
             throw new \InvalidArgumentException("n must be greater than or equal to 0");
         }
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return Iter<T>
      */
-    public function skipWhile(callable $callback): Iter {
+    public function skipWhile(callable $callback): Iter
+    {
         while ($this->valid()) {
             $current = $this->current();
             assert($current !== null);
@@ -112,11 +121,12 @@ abstract class Iter implements Iterator
     }
 
     /**
-     * @param int $start inclusive
-     * @param int $end exclusive
+     * @param  int $start inclusive
+     * @param  int $end   exclusive
      * @return Iter<T>
      */
-    public function slice(int $start, int $end): Iter {
+    public function slice(int $start, int $end): Iter
+    {
         if ($start < 0) {
             throw new \InvalidArgumentException("start must be greater than or equal to 0");
         }
@@ -133,7 +143,8 @@ abstract class Iter implements Iterator
     /**
      * @return T[]
      */
-    public function collect(): array {
+    public function collect(): array
+    {
         $result = [];
         while ($this->valid()) {
             $current = $this->current();
@@ -146,10 +157,11 @@ abstract class Iter implements Iterator
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return int
      */
-    public function count(?callable $callback = null): int {
+    public function count(?callable $callback = null): int
+    {
         $iterator = $this;
         if ($callback !== null) {
             $iterator = $this->filter($callback);
@@ -166,7 +178,8 @@ abstract class Iter implements Iterator
     /**
      * @param callable(T): bool $callback
      */
-    public function any(?callable $callback = null): bool {
+    public function any(?callable $callback = null): bool
+    {
         while ($this->valid()) {
             if ($callback === null) {
                 return true;
@@ -186,7 +199,8 @@ abstract class Iter implements Iterator
     /**
      * @param callable(T): bool $callback
      */
-    public function all(callable $callback): bool {
+    public function all(callable $callback): bool
+    {
         while ($this->valid()) {
             $current = $this->current();
             assert($current !== null);
@@ -200,10 +214,11 @@ abstract class Iter implements Iterator
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return ?T
      */
-    public function find(callable $callback): mixed {
+    public function find(callable $callback): mixed
+    {
         while ($this->valid()) {
             $current = $this->current();
             assert($current !== null);
@@ -217,10 +232,11 @@ abstract class Iter implements Iterator
     }
 
     /**
-     * @param callable(T): bool $callback
+     * @param  callable(T): bool $callback
      * @return ?T
      */
-    public function findLast(callable $callback): mixed {
+    public function findLast(callable $callback): mixed
+    {
         $last = null;
         while ($this->valid()) {
             $current = $this->current();
@@ -237,7 +253,8 @@ abstract class Iter implements Iterator
     /**
      * @return ?T
      */
-    public function last(): mixed {
+    public function last(): mixed
+    {
         $last = null;
         while ($this->valid()) {
             $last = $this->current();
@@ -249,51 +266,59 @@ abstract class Iter implements Iterator
     /**
      * Returns the first element of the iterator, or null if the iterator is empty.
      * This does not advance or rewind the iterator.
+     *
      * @return ?T
      */
-    public function first(): mixed {
+    public function first(): mixed
+    {
         return $this->valid() ? $this->current() : null;
     }
 
-    public function position(): int {
+    public function position(): int
+    {
         return $this->position;
     }
 
     /**
-     * @param Iter<T> ...$iterators
+     * @param  Iter<T> ...$iterators
      * @return Chain<T>
      */
-    public function chain(Iter ...$iterators): Chain {
+    public function chain(Iter ...$iterators): Chain
+    {
         return new Chain($this, ...$iterators);
     }
 
     /**
      * @return Enumerator<T>
      */
-    public function enumerate(): Enumerator {
+    public function enumerate(): Enumerator
+    {
         return new Enumerator($this);
     }
 
     /**
-     * @param Iter<T> ...$iterators
+     * @param  Iter<T> ...$iterators
      * @return Zip<T>
      */
-    public function zip(Iter ...$iterators): Zip {
+    public function zip(Iter ...$iterators): Zip
+    {
         return new Zip($this, ...$iterators);
     }
 
     /**
-     * @param Iter<T> ...$iterators
+     * @param  Iter<T> ...$iterators
      * @return Interleave<T>
      */
-    public function interleave(Iter ...$iterators): Interleave {
+    public function interleave(Iter ...$iterators): Interleave
+    {
         return new Interleave($this, ...$iterators);
     }
 
     /**
      * @param callable(T): void $callback
      */
-    public function forEach(callable $callback): void {
+    public function forEach(callable $callback): void
+    {
         while ($this->valid()) {
             $current = $this->current();
             assert($current !== null);
@@ -305,11 +330,14 @@ abstract class Iter implements Iterator
 
     /**
      * @template U
-     * @param callable(T): (Iterator<U>|array<U>) $callback
-     * @return Flatten<U>
+     * @param    callable(T): (Iterator<U>|array<U>) $callback
+     * @return   Flatten<U>
      */
-    public function flatMap(callable $callback): Flatten {
-        /** @var Flatten<U> $result */
+    public function flatMap(callable $callback): Flatten
+    {
+        /**
+ * @var Flatten<U> $result
+*/
         $result = $this->map($callback)->flatten();
         return $result;
     }
@@ -317,26 +345,31 @@ abstract class Iter implements Iterator
     /**
      * @return Flatten<mixed>
      */
-    public function flatten(): Flatten {
+    public function flatten(): Flatten
+    {
         return new Flatten($this);
     }
 
     /**
      * @return Cycle<T>
      */
-    public function cycle(): Cycle {
+    public function cycle(): Cycle
+    {
         return new Cycle($this);
     }
 
     /**
-     * @param callable(T): void $callback
+     * @param  callable(T): void $callback
      * @return Iter<T>
      */
-    public function inspect(callable $callback): Iter {
-        return $this->map(function ($value) use (&$callback) {
-            $callback($value);
-            return $value;
-        });
+    public function inspect(callable $callback): Iter
+    {
+        return $this->map(
+            function ($value) use (&$callback) {
+                $callback($value);
+                return $value;
+            }
+        );
     }
 
     /**

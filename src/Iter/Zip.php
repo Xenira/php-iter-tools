@@ -7,13 +7,15 @@ use Xenira\IterTools\Iter;
 /**
  * Class Zip
  *
- * @package Xenira\IterTools\Iter
- * @template T
+ * @package          Xenira\IterTools\Iter
+ * @template         T
  * @template-extends Iter<T>
  */
 class Zip extends Iter
 {
-    /** @var list<Iter<T>> */
+    /**
+     * @var list<Iter<T>>
+     */
     private array $zipped;
 
     /**
@@ -61,7 +63,7 @@ class Zip extends Iter
     }
 
     /**
-     * @param int $n
+     * @param  int $n
      * @return Iter<T>
      */
     public function skip(int $n): Iter

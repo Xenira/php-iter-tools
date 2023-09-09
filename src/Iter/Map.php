@@ -3,13 +3,13 @@
 namespace Xenira\IterTools\Iter;
 
 use Closure;
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Map extends IterToolsIterator
+class Map extends Iter
 {
     private Closure $callback;
 
-    public function __construct(private IterToolsIterator $iterator, callable $callback)
+    public function __construct(Iter $iterator, callable $callback)
     {
         $this->callback = Closure::fromCallable($callback);
         parent::__construct($iterator);
@@ -18,13 +18,5 @@ class Map extends IterToolsIterator
     public function current(): mixed
     {
         return ($this->callback)(parent::current());
-    }
-
-    public function skip(int $n): IterToolsIterator
-    {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
-        return $this;
     }
 }

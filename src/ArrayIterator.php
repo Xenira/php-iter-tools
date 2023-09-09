@@ -2,9 +2,9 @@
 
 namespace Xenira\IterTools;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class ArrayIterator extends IterToolsIterator
+class ArrayIterator extends Iter
 {
     private $array;
 
@@ -38,10 +38,9 @@ class ArrayIterator extends IterToolsIterator
         $this->position = 0;
     }
 
-    public function skip(int $n): IterToolsIterator
+    public function skip(int $n): Iter
     {
         parent::validateSkip($n);
-
         $this->position += $n;
         return $this;
     }

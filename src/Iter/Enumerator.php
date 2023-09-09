@@ -2,13 +2,13 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Enumerator extends IterToolsIterator
+class Enumerator extends Iter
 {
     private int $index = 0;
 
-    public function __construct(private IterToolsIterator $iterator)
+    public function __construct(Iter $iterator)
     {
         parent::__construct($iterator);
     }
@@ -30,11 +30,9 @@ class Enumerator extends IterToolsIterator
         parent::rewind();
     }
 
-    public function skip(int $n): IterToolsIterator
+    public function skip(int $n): Iter
     {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
+        parent::skip($n);
         $this->index += $n;
         return $this;
     }

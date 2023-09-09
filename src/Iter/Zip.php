@@ -2,14 +2,14 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Zip extends IterToolsIterator
+class Zip extends Iter
 {
-    /** @var list<IterToolsIterator> */
+    /** @var list<Iter> */
     private array $zipped;
 
-    public function __construct(private IterToolsIterator $iterator, IterToolsIterator ...$zipped)
+    public function __construct(Iter $iterator, Iter ...$zipped)
     {
         parent::__construct($iterator);
         $this->zipped = $zipped;
@@ -40,11 +40,9 @@ class Zip extends IterToolsIterator
         }
     }
 
-    public function skip(int $n): IterToolsIterator
+    public function skip(int $n): Iter
     {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
+        parent::skip($n);
         foreach ($this->zipped as $zipped) {
             $zipped->skip($n);
         }

@@ -3,8 +3,11 @@
 namespace Xenira\IterTools;
 
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Metadata\CoversClass;
 
+#[CoversClass(ArrayIterator::class)]
 class ArrayIteratorTest extends TestCase {
     private $iterator;
 
@@ -141,6 +144,15 @@ class ArrayIteratorTest extends TestCase {
         $this->assertNull($this->iterator->findLast(fn($x) => $x === 6));
     }
 
+    public function testLast(): void
+    {
+        $this->assertEquals(5, $this->iterator->last());
+        // TODO: Evaluate if this is the expected behavior
+        $this->assertEquals(null, $this->iterator->last());
+        $this->iterator->rewind();
+        $this->assertEquals(5, $this->iterator->last());
+    }
+
     public function testFirst(): void
     {
         $this->assertEquals(1, $this->iterator->first());
@@ -182,7 +194,7 @@ class ArrayIteratorTest extends TestCase {
 
     public function testInterleave(): void
     {
-        $this->iterator = $this->iterator->interleave([6, 7, 8]);
+        $this->iterator = $this->iterator->interleave(new ArrayIterator([6, 7, 8]));
 
         $this->assertEquals([1, 6, 2, 7, 3, 8, 4, 5], $this->iterator->collect());
     }
@@ -206,20 +218,23 @@ class ArrayIteratorTest extends TestCase {
         $this->assertEquals([1, 1, 2, 2, 3, 3, 4, 4, 5, 5], $this->iterator->collect());
     }
 
-    public function testGroupBy(): void
+    public function testCycle(): void
     {
-        $this->iterator = $this->iterator->groupBy(fn($x) => $x % 2);
+        $this->iterator = $this->iterator->cycle();
 
-        $this->assertEquals([0 => [2, 4], 1 => [1, 3, 5]], $this->iterator->collect());
+        $this->assertEquals([1, 2, 3, 4, 5, 1, 2, 3], $this->iterator->take(8)->collect());
+        $this->iterator->rewind();
+        $this->assertEquals([4, 5, 1, 2, 3, 4, 5, 1], $this->iterator->skip(8)->take(8)->collect());
     }
 
     public function testInspect(): void
     {
         $count = 0;
-        $this->iterator = $this->iterator->inspect(fn($x) => $count += $x);
+        $this->iterator = $this->iterator->inspect(function ($x) use (&$count) { $count += $x; });
 
-        $this->assertEquals(5, $count);
+        $this->assertEquals(0, $count);
         $this->assertEquals([1, 2, 3, 4, 5], $this->iterator->collect());
+        $this->assertEquals(15, $count);
     }
 
     public function testCurrent(): void

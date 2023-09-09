@@ -2,58 +2,47 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\ArrayIterator;
+use Xenira\IterTools\Iter;
 
-class Chain extends IterToolsIterator
+class Chain extends Iter
 {
-    private ?IterToolsIterator $initialIterator = null;
+    private bool $end = false;
 
-    public function __construct(private IterToolsIterator $iterator, private ?IterToolsIterator $chained)
+    public function __construct(Iter $iterator, Iter ...$chained)
     {
-        parent::__construct($iterator);
-        $this->initialIterator = $iterator;
+        parent::__construct((new ArrayIterator(array_merge([$iterator], $chained)))->filter(fn($i) => $i->valid()));
+    }
+
+
+    public function current()
+    {
+        return parent::current()->current();
     }
 
     public function next(): void
     {
-        if (!parent::valid() && $this->chained !== null) {
-            $this->iterator = $this->chained;
-            $this->chained = null;
+        if ($this->end) {
+            return;
         }
 
-        parent::next();
+        parent::current()->next();
 
-        if ($this->chained !== null && !parent::valid()) {
-            $this->iterator = $this->chained;
-            $this->chained = null;
+        if (!parent::current()->valid()) {
+            parent::next();
         }
+
+        $this->end = !parent::valid();
+    }
+
+    public function valid(): bool
+    {
+        return !$this->end && parent::valid();
     }
 
     public function rewind(): void
     {
-        if ($this->chained === null) {
-            $this->chained = $this->iterator;
-            $this->iterator = $this->initialIterator;
-        }
-
-        $this->chained->rewind();
-        parent::rewind();
-    }
-
-    public function skip(int $n): IterToolsIterator
-    {
-        parent::validateSkip($n);
-
-        $currentPosition = parent::position();
-        $this->currentIterator->skip($n);
-        if ($this->chained !== null && !parent::valid()) {
-            $diff = parent::position() - $currentPosition - $n;
-            if ($diff > 0) {
-                $this->chained->skip($diff);
-            }
-            $this->iterator = $this->chained;
-        }
-
-        return $this;
+        // TODO: Evaluate if this is a good idea. It would be nice to be able to rewind the chain iterator, but it would be a bit tricky to implement efficiently.
+        throw new \BadMethodCallException('Chain iterator cannot be rewound');
     }
 }

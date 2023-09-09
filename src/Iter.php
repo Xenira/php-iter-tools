@@ -4,8 +4,11 @@ namespace Xenira\IterTools;
 
 use Iterator;
 use Xenira\IterTools\Iter\Chain;
+use Xenira\IterTools\Iter\Cycle;
 use Xenira\IterTools\Iter\Enumerator;
 use Xenira\IterTools\Iter\Filter;
+use Xenira\IterTools\Iter\Flatten;
+use Xenira\IterTools\Iter\Interleave;
 use Xenira\IterTools\Iter\Map;
 use Xenira\IterTools\Iter\Take;
 use Xenira\IterTools\Iter\TakeWhile;
@@ -14,13 +17,13 @@ use Xenira\IterTools\Iter\Zip;
 /**
  * @implements Iterator<mixed,mixed>
  */
-abstract class IterToolsIterator implements Iterator
+abstract class Iter implements Iterator
 {
     protected int $position = 0;
 
-    protected function  __construct(private ?IterToolsIterator $iterator) {
-        assert($iterator !== null, "If you see this, you're doing something wrong. This constructor should never be called directly. Try overriding it instead.");
+    protected function  __construct(private Iterator $iterator) {
     }
+
     /**
      * @param callable(): mixed $callback
      */
@@ -55,7 +58,16 @@ abstract class IterToolsIterator implements Iterator
         return new TakeWhile($this, $callback);
     }
 
-    abstract public function skip(int $n): IterToolsIterator;
+    public function skip(int $n): Iter {
+        $this->validateSkip($n);
+
+        while ($n > 0) {
+            $this->next();
+            $n--;
+        }
+
+        return $this;
+    }
 
     protected function validateSkip(int $n): void {
         if ($n < 0) {
@@ -65,7 +77,7 @@ abstract class IterToolsIterator implements Iterator
     /**
      * @param callable(): mixed $callback
      */
-    public function skipWhile(callable $callback): IterToolsIterator {
+    public function skipWhile(callable $callback): Iter {
         while ($this->valid() && $callback($this->current())) {
             $this->skip(1);
         }
@@ -75,9 +87,9 @@ abstract class IterToolsIterator implements Iterator
     /**
      * @param int $start inclusive
      * @param int $end exclusive
-     * @return IterToolsIterator<TValue>
+     * @return Iter<TValue>
      */
-    public function slice(int $start, int $end): IterToolsIterator {
+    public function slice(int $start, int $end): Iter {
         if ($start < 0) {
             throw new \InvalidArgumentException("start must be greater than or equal to 0");
         }
@@ -104,12 +116,15 @@ abstract class IterToolsIterator implements Iterator
     }
 
     public function count(?callable $callback = null): int {
+        $iterator = $this;
+        if ($callback !== null) {
+            $iterator = $this->filter($callback);
+        }
+
         $count = 0;
-        while ($this->valid()) {
-            if ($callback === null || $callback($this->current())) {
-                $count++;
-            }
-            $this->next();
+        while ($iterator->valid()) {
+            $count++;
+            $iterator->next();
         }
         return $count;
     }
@@ -189,25 +204,20 @@ abstract class IterToolsIterator implements Iterator
         return $this->position;
     }
 
-    public function chain(IterToolsIterator ...$iterators): IterToolsIterator {
-        $result = $this;
-        foreach ($iterators as $iterator) {
-            $result = new Chain($result, $iterator);
-        }
-        return $result;
+    public function chain(Iter ...$iterators): Chain {
+        return new Chain($this, ...$iterators);
     }
 
     public function enumerate(): Enumerator {
         return new Enumerator($this);
     }
 
-    public function zip(IterToolsIterator ...$iterators): Zip {
+    public function zip(Iter ...$iterators): Zip {
         return new Zip($this, ...$iterators);
     }
 
-    public function interleave(IterToolsIterator ...$iterators): Iterator {
-        $iterators = array_merge([$this], $iterators);
-        throw new \Exception("Not implemented");
+    public function interleave(Iter ...$iterators): Interleave {
+        return new Interleave($this, ...$iterators);
     }
     /**
      * @param callable(): mixed $callback
@@ -222,47 +232,50 @@ abstract class IterToolsIterator implements Iterator
      * @param callable(): mixed $callback
      */
     public function flatMap(callable $callback): Iterator {
-        throw new \Exception("Not implemented");
+        return $this->map($callback)->flatten();
     }
 
     public function flatten(): Iterator {
-        throw new \Exception("Not implemented");
+        return new Flatten($this);
     }
+
+    public function cycle(): Cycle {
+        return new Cycle($this);
+    }
+
     /**
      * @param callable(): mixed $callback
      */
-    public function inspect(callable $callback): Iterator {
-        $callback($this->current());
+    public function inspect(callable $callback): Iter {
+        return $this->map(function ($value) use (&$callback) {
+            $callback($value);
+            return $value;
+        });
     }
 
     public function current()
     {
-        assert($this->iterator !== null, "this->iterator must not be null");
         return $this->iterator->current();
     }
 
     public function next(): void
     {
-        assert($this->iterator !== null, "this->iterator must not be null");
         $this->position++;
         $this->iterator->next();
     }
 
     public function key()
     {
-        assert($this->iterator !== null, "this->iterator must not be null");
         $this->iterator->key();
     }
 
     public function valid(): bool
     {
-        assert($this->iterator !== null, "this->iterator must not be null");
         return $this->iterator->valid();
     }
 
     public function rewind(): void
     {
-        assert($this->iterator !== null, "this->iterator must not be null");
         $this->iterator->rewind();
     }
 }

@@ -10,9 +10,7 @@ jobs:
     - name: Composer install
       uses: php-actions/composer@v6
     - name: phpunit
-      uses: php-actions/phpunit@v3
-      with:
-        args: "test"
+      run: vendor/bin/phpunit --no-coverage
 
   static-analysis:
     runs-on: ubuntu-latest
@@ -24,6 +22,7 @@ jobs:
       uses: php-actions/phpstan@v3
       with:
         path: src/
+        level: max
 
   code-sniffer:
     runs-on: ubuntu-latest

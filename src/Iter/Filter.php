@@ -5,10 +5,23 @@ namespace Xenira\IterTools\Iter;
 use Closure;
 use Xenira\IterTools\Iter;
 
+/**
+ * Class Filter
+ *
+ * @package Xenira\IterTools\Iter
+ * @template T
+ * @template-extends Iter<T>
+ */
 class Filter extends Iter {
     private Closure $callback;
     private bool $end = false;
 
+    /**
+     * Filter constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param callable(T): bool $callback
+     */
     public function __construct(Iter $iterator, callable $callback) {
         $this->callback = Closure::fromCallable($callback);
         parent::__construct($iterator);

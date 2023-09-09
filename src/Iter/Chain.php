@@ -5,19 +5,45 @@ namespace Xenira\IterTools\Iter;
 use Xenira\IterTools\ArrayIterator;
 use Xenira\IterTools\Iter;
 
+/**
+ * Class Chain
+ *
+ * @package Xenira\IterTools\Iter
+ *
+ * @template T
+ * @template-extends Iter<Iter<T>>
+ */
 class Chain extends Iter
 {
     private bool $end = false;
 
+    /**
+     * Chain constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param Iter<T> ...$chained
+     */
     public function __construct(Iter $iterator, Iter ...$chained)
     {
-        parent::__construct((new ArrayIterator(array_merge([$iterator], $chained)))->filter(fn($i) => $i->valid()));
+        parent::__construct((new ArrayIterator(array_values([$iterator, ...$chained])))->filter(fn($i) => $i->valid()));
     }
 
-
-    public function current()
+    /**
+     * @return T|null
+     */
+    public function current(): mixed
     {
-        return parent::current()->current();
+        if ($this->end) {
+            return null;
+        }
+
+        $current = parent::current();
+        if ($current === null) {
+            $this->end = true;
+            return null;
+        }
+
+        return $current->current();
     }
 
     public function next(): void
@@ -25,10 +51,16 @@ class Chain extends Iter
         if ($this->end) {
             return;
         }
+        $current = parent::current();
+        if ($current === null) {
+            $this->end = true;
+            return;
+        }
 
-        parent::current()->next();
+        $current->next();
+        $current = parent::current();
 
-        if (!parent::current()->valid()) {
+        if ($current !== null && !$current->valid()) {
             parent::next();
         }
 

@@ -3,13 +3,11 @@
 namespace Xenira\IterTools;
 
 use InvalidArgumentException;
-use PHPUnit\Framework\Attributes\UsesClass;
 use PHPUnit\Framework\TestCase;
-use PHPUnit\Metadata\CoversClass;
 
-#[CoversClass(ArrayIterator::class)]
 class ArrayIteratorTest extends TestCase {
-    private $iterator;
+    /** @var ArrayIterator<int> */
+    private ArrayIterator $iterator;
 
     public function setUp(): void
     {
@@ -25,79 +23,79 @@ class ArrayIteratorTest extends TestCase {
 
     public function testMap(): void
     {
-        $this->iterator = $this->iterator->map(fn($x) => $x * 2);
+        $iterator = $this->iterator->map(fn($x) => $x * 2);
 
-        $this->assertEquals([2, 4, 6, 8, 10], $this->iterator->collect());
+        $this->assertEquals([2, 4, 6, 8, 10], $iterator->collect());
     }
 
     public function testFilter(): void
     {
-        $this->iterator = $this->iterator->filter(fn($x) => $x % 2 === 0);
+        $iterator = $this->iterator->filter(fn($x) => $x % 2 === 0);
 
-        $this->assertEquals([2, 4], $this->iterator->collect());
+        $this->assertEquals([2, 4], $iterator->collect());
     }
 
     public function testMapFilter(): void
     {
-        $this->iterator = $this->iterator->map(fn($x) => $x * 2)->filter(fn($x) => $x > 4);
+        $iterator = $this->iterator->map(fn($x) => $x * 2)->filter(fn($x) => $x > 4);
 
-        $this->assertEquals([6, 8, 10], $this->iterator->collect());
+        $this->assertEquals([6, 8, 10], $iterator->collect());
     }
 
     public function testReduce(): void
     {
-        $this->assertEquals(15, $this->iterator->reduce(fn($acc, $x) => $acc + $x));
+        $this->assertEquals(15, $this->iterator->reduce(fn($acc, $x) => $acc + $x, 0));
         $this->iterator->rewind();
-        $this->assertEquals(16, $this->iterator->reduce(fn($acc, $x) => $acc + $x, 1));
+        $this->assertEquals(18, $this->iterator->reduce(fn($acc, $x) => $acc + $x, 3));
     }
 
     public function testTake(): void
     {
-        $this->iterator = $this->iterator->take(3);
+        $iterator = $this->iterator->take(3);
 
-        $this->assertEquals([1, 2, 3], $this->iterator->collect());
+        $this->assertEquals([1, 2, 3], $iterator->collect());
     }
 
     public function testTakeWhile(): void
     {
-        $this->iterator = $this->iterator->takeWhile(fn($x) => $x < 4);
+        $iterator = $this->iterator->takeWhile(fn($x) => $x < 4);
 
-        $this->assertEquals([1, 2, 3], $this->iterator->collect());
+        $this->assertEquals([1, 2, 3], $iterator->collect());
     }
 
     public function testSkip(): void
     {
-        $this->iterator = $this->iterator->skip(3);
+        $iterator = $this->iterator->skip(3);
 
-        $this->assertEquals([4, 5], $this->iterator->collect());
+        $this->assertEquals([4, 5], $iterator->collect());
         $this->expectException(InvalidArgumentException::class);
-        $this->iterator->skip(-1);
+        $iterator->skip(-1);
     }
 
     public function testSkipWhile(): void
     {
-        $this->iterator = $this->iterator->skipWhile(fn($x) => $x < 4);
+        $iterator = $this->iterator->skipWhile(fn($x) => $x < 4);
 
-        $this->assertEquals([4, 5], $this->iterator->collect());
+        $this->assertEquals([4, 5], $iterator->collect());
     }
 
     public function testSlice(): void
     {
-        $this->iterator = $this->iterator->slice(1, 4);
+        $iterator = $this->iterator->slice(1, 4);
 
-        $this->assertEquals([2, 3, 4], $this->iterator->collect());
+        $this->assertEquals([2, 3, 4], $iterator->collect());
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('start must be greater than or equal to 0');
-        $this->iterator = $this->iterator->slice(-3, 4);
+        $iterator = $this->iterator->slice(-3, 4);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('end must be greater than or equal to 0');
-        $this->iterator = $this->iterator->slice(1, -2);
+        $iterator = $this->iterator->slice(1, -2);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('end must be greater than or equal to start');
-        $this->iterator = $this->iterator->slice(3, 2);
+        $iterator = $this->iterator->slice(3, 2);
     }
 
     public function testCollect(): void
@@ -173,30 +171,30 @@ class ArrayIteratorTest extends TestCase {
 
     public function testChain(): void
     {
-        $this->iterator = $this->iterator->chain(new ArrayIterator([6, 7, 8]));
+        $iterator = $this->iterator->chain(new ArrayIterator([6, 7, 8]));
 
-        $this->assertEquals([1, 2, 3, 4, 5, 6, 7, 8], $this->iterator->collect());
+        $this->assertEquals([1, 2, 3, 4, 5, 6, 7, 8], $iterator->collect());
     }
 
     public function testEnumerate(): void
     {
-        $this->iterator = $this->iterator->enumerate();
+        $iterator = $this->iterator->enumerate();
 
-        $this->assertEquals([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]], $this->iterator->collect());
+        $this->assertEquals([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]], $iterator->collect());
     }
 
     public function testZip(): void
     {
-        $this->iterator = $this->iterator->zip(new ArrayIterator([6, 7, 8]));
+        $iterator = $this->iterator->zip(new ArrayIterator([6, 7, 8]));
 
-        $this->assertEquals([[1, 6], [2, 7], [3, 8], [4, null], [5, null]], $this->iterator->collect());
+        $this->assertEquals([[1, 6], [2, 7], [3, 8], [4, null], [5, null]], $iterator->collect());
     }
 
     public function testInterleave(): void
     {
-        $this->iterator = $this->iterator->interleave(new ArrayIterator([6, 7, 8]));
+        $iterator = $this->iterator->interleave(new ArrayIterator([6, 7, 8]));
 
-        $this->assertEquals([1, 6, 2, 7, 3, 8, 4, 5], $this->iterator->collect());
+        $this->assertEquals([1, 6, 2, 7, 3, 8, 4, 5], $iterator->collect());
     }
 
     public function testForEach(): void
@@ -206,34 +204,34 @@ class ArrayIteratorTest extends TestCase {
 
     public function testFlatMap(): void
     {
-        $this->iterator = $this->iterator->flatMap(fn($x) => [$x, $x]);
+        $iterator = $this->iterator->flatMap(fn($x) => [$x, $x]);
 
-        $this->assertEquals([1, 1, 2, 2, 3, 3, 4, 4, 5, 5], $this->iterator->collect());
+        $this->assertEquals([1, 1, 2, 2, 3, 3, 4, 4, 5, 5], $iterator->collect());
     }
 
     public function testFlatten(): void
     {
-        $this->iterator = $this->iterator->map(fn($x) => [$x, $x])->flatten();
+        $iterator = $this->iterator->map(fn($x) => [$x, $x])->flatten();
 
-        $this->assertEquals([1, 1, 2, 2, 3, 3, 4, 4, 5, 5], $this->iterator->collect());
+        $this->assertEquals([1, 1, 2, 2, 3, 3, 4, 4, 5, 5], $iterator->collect());
     }
 
     public function testCycle(): void
     {
-        $this->iterator = $this->iterator->cycle();
+        $iterator = $this->iterator->cycle();
 
-        $this->assertEquals([1, 2, 3, 4, 5, 1, 2, 3], $this->iterator->take(8)->collect());
-        $this->iterator->rewind();
-        $this->assertEquals([4, 5, 1, 2, 3, 4, 5, 1], $this->iterator->skip(8)->take(8)->collect());
+        $this->assertEquals([1, 2, 3, 4, 5, 1, 2, 3], $iterator->take(8)->collect());
+        $iterator->rewind();
+        $this->assertEquals([4, 5, 1, 2, 3, 4, 5, 1], $iterator->skip(8)->take(8)->collect());
     }
 
     public function testInspect(): void
     {
         $count = 0;
-        $this->iterator = $this->iterator->inspect(function ($x) use (&$count) { $count += $x; });
+        $iterator = $this->iterator->inspect(function ($x) use (&$count) { $count += $x; });
 
         $this->assertEquals(0, $count);
-        $this->assertEquals([1, 2, 3, 4, 5], $this->iterator->collect());
+        $this->assertEquals([1, 2, 3, 4, 5], $iterator->collect());
         $this->assertEquals(15, $count);
     }
 

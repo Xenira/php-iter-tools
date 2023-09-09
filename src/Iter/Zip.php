@@ -4,19 +4,39 @@ namespace Xenira\IterTools\Iter;
 
 use Xenira\IterTools\Iter;
 
+/**
+ * Class Zip
+ *
+ * @package Xenira\IterTools\Iter
+ * @template T
+ * @template-extends Iter<T>
+ */
 class Zip extends Iter
 {
-    /** @var list<Iter> */
+    /** @var list<Iter<T>> */
     private array $zipped;
 
+    /**
+     * Zip constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param Iter<T> ...$zipped
+     */
     public function __construct(Iter $iterator, Iter ...$zipped)
     {
         parent::__construct($iterator);
-        $this->zipped = $zipped;
+        $this->zipped = array_values($zipped);
     }
 
-    public function current(): array
+    /**
+     * @return array<int, ?T>
+     */
+    public function current(): ?array
     {
+        if (!parent::valid()) {
+            return null;
+        }
+
         $current = [parent::current()];
         foreach ($this->zipped as $zipped) {
             $current[] = $zipped->current();
@@ -40,6 +60,10 @@ class Zip extends Iter
         }
     }
 
+    /**
+     * @param int $n
+     * @return Iter<T>
+     */
     public function skip(int $n): Iter
     {
         parent::skip($n);

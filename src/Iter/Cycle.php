@@ -4,8 +4,19 @@ namespace Xenira\IterTools\Iter;
 
 use Xenira\IterTools\Iter;
 
+/**
+ * Class Cycle
+ * @package Xenira\IterTools\Iter
+ *
+ * @template T
+ * @template-extends Iter<T>
+ */
 class Cycle extends Iter
 {
+    /**
+     * Cycle constructor.
+     * @param Iter<T> $iterator
+     */
     public function __construct(protected Iter $iterator)
     {
         parent::__construct($iterator);
@@ -22,7 +33,7 @@ class Cycle extends Iter
     /**
      * As cycle needs to rewind the iterator, we need to validate the skip. This causes a greater runtime as valid() is called on every step.
      * @param int $n
-     * @return Iter
+     * @return Iter<T>
      */
     public function skip(int $n): Iter
     {

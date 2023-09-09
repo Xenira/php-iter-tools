@@ -5,13 +5,28 @@ namespace Xenira\IterTools\Iter;
 use Xenira\IterTools\ArrayIterator;
 use Xenira\IterTools\Iter;
 
+/**
+ * Class Interleave
+ *
+ * @package Xenira\IterTools\Iter
+ *
+ * @template T
+ * @template-extends Iter<Iter<T>>
+ */
 class Interleave extends Iter
 {
     private bool $end = false;
 
+    /**
+     * Interleave constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param Iter<T> ...$interleaved
+     */
     public function __construct(Iter $iterator, Iter ...$interleaved)
     {
-        $interleaved = (new ArrayIterator([$iterator, ...$interleaved]))->filter(fn($i) => $i->valid());
+        $interleaved = (new ArrayIterator(array_values([$iterator, ...$interleaved])))
+            ->filter(fn($i) => $i->valid());
         parent::__construct($interleaved->cycle());
     }
 
@@ -21,15 +36,27 @@ class Interleave extends Iter
             return;
         }
 
-        parent::current()->next();
+        $current = parent::current();
+        if ($current !== null) {
+            $current->next();
+        }
         parent::next();
 
         $this->end = !parent::valid();
     }
 
-    public function current()
+    /**
+     * @return T|null
+     */
+    public function current(): mixed
     {
-        return parent::current()->current();
+        $current = parent::current();
+        if ($current === null) {
+            $this->end = true;
+            return null;
+        }
+
+        return $current->current();
     }
 
     public function valid(): bool

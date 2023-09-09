@@ -2,18 +2,36 @@
 
 namespace Xenira\IterTools;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class ArrayIterator extends IterToolsIterator
+/**
+ * Class ArrayIterator
+ *
+ * @package          Xenira\IterTools
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class ArrayIterator extends Iter
 {
+    /**
+     * @var T[]
+     */
     private $array;
 
+    /**
+     * ArrayIterator constructor.
+     *
+     * @param list<T> $array
+     */
     public function __construct(array $array)
     {
         $this->array = $array;
     }
 
-    public function current()
+    /**
+     * @return T?
+     */
+    public function current(): mixed
     {
         return $this->array[$this->position];
     }
@@ -23,7 +41,7 @@ class ArrayIterator extends IterToolsIterator
         $this->position++;
     }
 
-    public function key()
+    public function key(): int
     {
         return $this->position;
     }
@@ -38,10 +56,13 @@ class ArrayIterator extends IterToolsIterator
         $this->position = 0;
     }
 
-    public function skip(int $n): IterToolsIterator
+    /**
+     * @param  int $n
+     * @return Iter<T>
+     */
+    public function skip(int $n): Iter
     {
         parent::validateSkip($n);
-
         $this->position += $n;
         return $this;
     }

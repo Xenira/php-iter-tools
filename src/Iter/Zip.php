@@ -2,21 +2,43 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Zip extends IterToolsIterator
+/**
+ * Class Zip
+ *
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class Zip extends Iter
 {
-    /** @var list<IterToolsIterator> */
+    /**
+     * @var list<Iter<T>>
+     */
     private array $zipped;
 
-    public function __construct(private IterToolsIterator $iterator, IterToolsIterator ...$zipped)
+    /**
+     * Zip constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param Iter<T> ...$zipped
+     */
+    public function __construct(Iter $iterator, Iter ...$zipped)
     {
         parent::__construct($iterator);
-        $this->zipped = $zipped;
+        $this->zipped = array_values($zipped);
     }
 
-    public function current(): array
+    /**
+     * @return array<int, ?T>
+     */
+    public function current(): ?array
     {
+        if (!parent::valid()) {
+            return null;
+        }
+
         $current = [parent::current()];
         foreach ($this->zipped as $zipped) {
             $current[] = $zipped->current();
@@ -40,11 +62,13 @@ class Zip extends IterToolsIterator
         }
     }
 
-    public function skip(int $n): IterToolsIterator
+    /**
+     * @param  int $n
+     * @return Iter<T>
+     */
+    public function skip(int $n): Iter
     {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
+        parent::skip($n);
         foreach ($this->zipped as $zipped) {
             $zipped->skip($n);
         }

@@ -2,20 +2,40 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Enumerator extends IterToolsIterator
+/**
+ * Class Enumerator
+ *
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class Enumerator extends Iter
 {
     private int $index = 0;
 
-    public function __construct(private IterToolsIterator $iterator)
+    /**
+     * Enumerator constructor.
+     *
+     * @param Iter<T> $iterator
+     */
+    public function __construct(Iter $iterator)
     {
         parent::__construct($iterator);
     }
 
-    public function current(): array
+    /**
+     * @return array{0: int, 1: T}
+     */
+    public function current(): ?array
     {
-        return [$this->index, parent::current()];
+        $current = parent::current();
+        if ($current === null) {
+            return null;
+        }
+
+        return [$this->index, $current];
     }
 
     public function next(): void
@@ -30,11 +50,13 @@ class Enumerator extends IterToolsIterator
         parent::rewind();
     }
 
-    public function skip(int $n): IterToolsIterator
+    /**
+     * @param  int $n
+     * @return Iter<T>
+     */
+    public function skip(int $n): Iter
     {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
+        parent::skip($n);
         $this->index += $n;
         return $this;
     }

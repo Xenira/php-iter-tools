@@ -1,1 +1,4 @@
 /vendor/
+/.phpunit.cache
+/html-coverage
+coverage.txt

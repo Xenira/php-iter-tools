@@ -2,11 +2,24 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Take extends IterToolsIterator
+/**
+ * Class Take
+ *
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class Take extends Iter
 {
-    public function __construct(private IterToolsIterator $iterator, private int $n)
+    /**
+     * Take constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param int     $n
+     */
+    public function __construct(Iter $iterator, private int $n)
     {
         parent::__construct($iterator);
     }
@@ -22,11 +35,9 @@ class Take extends IterToolsIterator
         $this->n--;
     }
 
-    public function skip(int $n): IterToolsIterator
+    public function skip(int $n): Iter
     {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
+        parent::skip($n);
         $this->n -= $n;
         return $this;
     }

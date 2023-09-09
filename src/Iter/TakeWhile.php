@@ -3,15 +3,28 @@
 namespace Xenira\IterTools\Iter;
 
 use Closure;
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class TakeWhile extends IterToolsIterator
+/**
+ * Class TakeWhile
+ *
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class TakeWhile extends Iter
 {
     private Closure $callback;
     private bool $done = false;
     private bool $tested = false;
 
-    public function __construct(private IterToolsIterator $iterator, callable $callback)
+    /**
+     * TakeWhile constructor.
+     *
+     * @param Iter<T>           $iterator
+     * @param callable(T): bool $callback
+     */
+    public function __construct(Iter $iterator, callable $callback)
     {
         $this->callback = Closure::fromCallable($callback);
         parent::__construct($iterator);
@@ -34,13 +47,5 @@ class TakeWhile extends IterToolsIterator
     {
         parent::next();
         $this->tested = false;
-    }
-
-    public function skip(int $n): IterToolsIterator
-    {
-        parent::validateSkip($n);
-
-        $this->iterator->skip($n);
-        return $this;
     }
 }

@@ -1,0 +1,36 @@
+name: Push
+
+on: [push]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Composer install
+      uses: php-actions/composer@v6
+    - name: phpunit
+      run: vendor/bin/phpunit --no-coverage
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Composer install
+      uses: php-actions/composer@v6
+    - name: phpstan
+      uses: php-actions/phpstan@v3
+      with:
+        path: src/
+        level: max
+
+  code-sniffer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Composer install
+        uses: php-actions/composer@v6
+      - name: PHP Code Sniffer
+        uses: php-actions/phpcs@v1
+        with:
+          standard: phpcs.xml

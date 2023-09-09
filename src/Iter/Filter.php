@@ -3,29 +3,54 @@
 namespace Xenira\IterTools\Iter;
 
 use Closure;
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\Iter;
 
-class Filter extends IterToolsIterator {
+/**
+ * Class Filter
+ *
+ * @package          Xenira\IterTools\Iter
+ * @template         T
+ * @template-extends Iter<T>
+ */
+class Filter extends Iter
+{
     private Closure $callback;
     private bool $end = false;
 
-    public function __construct(private IterToolsIterator $iterator, callable $callback) {
+    /**
+     * Filter constructor.
+     *
+     * @param Iter<T>           $iterator
+     * @param callable(T): bool $callback
+     */
+    public function __construct(Iter $iterator, callable $callback)
+    {
         $this->callback = Closure::fromCallable($callback);
         parent::__construct($iterator);
 
         $this->advance();
     }
 
-    public function next(): void {
+    public function next(): void
+    {
         parent::next();
         $this->advance();
     }
 
-    public function valid(): bool {
+    public function valid(): bool
+    {
         return !$this->end && parent::valid();
     }
 
-    private function advance(): void {
+    public function rewind(): void
+    {
+        $this->end = false;
+        parent::rewind();
+        $this->advance();
+    }
+
+    private function advance(): void
+    {
         $valid = parent::valid();
         while ($valid && !($this->callback)(parent::current())) {
             parent::next();
@@ -35,18 +60,5 @@ class Filter extends IterToolsIterator {
         if (!$valid) {
             $this->end = true;
         }
-    }
-
-    public function skip(int $n): IterToolsIterator
-    {
-        parent::validateSkip($n);
-
-        for ($i = 0; $i < $n; $i++) {
-            if (!$this->valid()) {
-                break;
-            }
-            $this->next();
-        }
-        return $this;
     }
 }

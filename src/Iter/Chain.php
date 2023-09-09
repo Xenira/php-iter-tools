@@ -2,58 +2,80 @@
 
 namespace Xenira\IterTools\Iter;
 
-use Xenira\IterTools\IterToolsIterator;
+use Xenira\IterTools\ArrayIterator;
+use Xenira\IterTools\Iter;
 
-class Chain extends IterToolsIterator
+/**
+ * Class Chain
+ *
+ * @package Xenira\IterTools\Iter
+ *
+ * @template         T
+ * @template-extends Iter<Iter<T>>
+ */
+class Chain extends Iter
 {
-    private ?IterToolsIterator $initialIterator = null;
+    private bool $end = false;
 
-    public function __construct(private IterToolsIterator $iterator, private ?IterToolsIterator $chained)
+    /**
+     * Chain constructor.
+     *
+     * @param Iter<T> $iterator
+     * @param Iter<T> ...$chained
+     */
+    public function __construct(Iter $iterator, Iter ...$chained)
     {
-        parent::__construct($iterator);
-        $this->initialIterator = $iterator;
+        parent::__construct((new ArrayIterator(array_values([$iterator, ...$chained])))->filter(fn($i) => $i->valid()));
+    }
+
+    /**
+     * @return T|null
+     */
+    public function current(): mixed
+    {
+        if ($this->end) {
+            return null;
+        }
+
+        $current = parent::current();
+        if ($current === null) {
+            $this->end = true;
+            return null;
+        }
+
+        return $current->current();
     }
 
     public function next(): void
     {
-        if (!parent::valid() && $this->chained !== null) {
-            $this->iterator = $this->chained;
-            $this->chained = null;
+        if ($this->end) {
+            return;
+        }
+        $current = parent::current();
+        if ($current === null) {
+            $this->end = true;
+            return;
         }
 
-        parent::next();
+        $current->next();
+        $current = parent::current();
 
-        if ($this->chained !== null && !parent::valid()) {
-            $this->iterator = $this->chained;
-            $this->chained = null;
+        if ($current !== null && !$current->valid()) {
+            parent::next();
         }
+
+        $this->end = !parent::valid();
+    }
+
+    public function valid(): bool
+    {
+        return !$this->end && parent::valid();
     }
 
     public function rewind(): void
     {
-        if ($this->chained === null) {
-            $this->chained = $this->iterator;
-            $this->iterator = $this->initialIterator;
-        }
-
-        $this->chained->rewind();
-        parent::rewind();
-    }
-
-    public function skip(int $n): IterToolsIterator
-    {
-        parent::validateSkip($n);
-
-        $currentPosition = parent::position();
-        $this->currentIterator->skip($n);
-        if ($this->chained !== null && !parent::valid()) {
-            $diff = parent::position() - $currentPosition - $n;
-            if ($diff > 0) {
-                $this->chained->skip($diff);
-            }
-            $this->iterator = $this->chained;
-        }
-
-        return $this;
+        // TODO: Evaluate if this is a good idea. It would be nice to be able to rewind the chain iterator,
+        //       but it would be a bit tricky to implement efficiently.
+        throw new \BadMethodCallException('Chain iterator cannot be rewound');
     }
 }

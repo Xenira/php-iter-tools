@@ -1,0 +1,5 @@
+{
+  "$schema": "./vendor/phpbench/phpbench/phpbench.schema.json",
+  "runner.path": "./benchmark",
+  "runner.bootstrap": "vendor/autoload.php"
+}

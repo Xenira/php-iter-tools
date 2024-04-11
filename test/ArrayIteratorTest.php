@@ -148,9 +148,6 @@ class ArrayIteratorTest extends TestCase
     public function testLast(): void
     {
         $this->assertEquals(5, $this->iterator->last());
-        // TODO: Evaluate if this is the expected behavior
-        $this->assertEquals(null, $this->iterator->last());
-        $this->iterator->rewind();
         $this->assertEquals(5, $this->iterator->last());
     }
 

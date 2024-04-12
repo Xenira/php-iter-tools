@@ -1,14 +1,30 @@
 use ext_php_rs::{
     boxed::ZBox,
     convert::{FromZval, IntoZval},
+    ffi::zend_object_compare_t,
     flags::DataType,
     prelude::*,
     types::{ZendClassObject, ZendHashTable, Zval},
 };
 
+#[php_class(name = "Iter")]
+pub struct IterBuilder {
+    inner: ZVal,
+}
+
+// impl<'a> Into<Box<(dyn Iterator<Item = ZVal> + 'a)>> for IterBuilder {
+//     fn into(self) -> Box<(dyn Iterator<Item = ZVal> + 'a)> {
+//         let inner = self.inner.inner;
+//         let iter = inner.array().unwrap().values().map(|x| ZVal::from(x));
+//         let iter = Box::new(iter);
+//
+//         iter
+//     }
+// }
+
 #[php_class(name = "ArrayIter")]
 pub struct ArrayIterator {
-    inner: Vec<Zval>,
+    inner: Zval,
     chain: Vec<Iter>,
     // inner: Box<dyn Iterator<Item = Box<dyn IntoZvalDyn>> + 'static>,
 }
@@ -17,15 +33,15 @@ pub struct ArrayIterator {
 impl ArrayIterator {
     #[constructor]
     pub fn new(vec: &Zval) -> Self {
-        let inner = vec
-            .array()
-            .unwrap()
-            .values()
-            .map(|v| v.shallow_clone())
-            .collect::<Vec<_>>();
+        // let inner = vec
+        //     .array()
+        //     .unwrap()
+        //     .values()
+        //     .map(|v| v.shallow_clone())
+        //     .collect::<Vec<_>>();
 
         Self {
-            inner,
+            inner: vec.shallow_clone(),
             chain: Vec::new(),
         }
     }
@@ -35,11 +51,11 @@ impl ArrayIterator {
     }
 
     pub fn last(&self) -> Option<Zval> {
-        self.iter().last()
+        self.iter().last().map(|x| x.inner)
     }
 
     pub fn nth(&self, n: i64) -> Option<Zval> {
-        self.iter().nth(n as usize)
+        self.iter().nth(n as usize).map(|x| x.inner)
     }
 
     pub fn chain(
@@ -68,7 +84,7 @@ impl ArrayIterator {
 
     pub fn for_each(&self, callback: ZCallable) {
         self.iter().for_each(|x| {
-            callback.zval.try_call(vec![&x]).unwrap();
+            callback.zval.try_call(vec![&x.inner]).unwrap();
         });
     }
 
@@ -166,7 +182,7 @@ impl ArrayIterator {
     }
 
     pub fn collect(&self) -> Vec<Zval> {
-        self.iter().collect::<Vec<_>>()
+        self.iter().map(|x| x.inner).collect::<Vec<_>>()
     }
 
     // TODO: try_collect
@@ -174,25 +190,30 @@ impl ArrayIterator {
     pub fn collect_into(&self, collection: &mut Zval) {
         let arr: &mut ZendHashTable = collection.array_mut().unwrap();
         for x in self.iter() {
-            arr.push(x);
+            arr.push(x.inner);
         }
     }
 
     pub fn partition(&self, callback: ZCallable) -> ZBox<ZendHashTable> {
-        let (left, right): (Vec<Zval>, Vec<Zval>) = self
-            .iter()
-            .partition(|x| callback.zval.try_call(vec![x]).unwrap().bool().unwrap());
+        let (left, right): (Vec<ZVal>, Vec<ZVal>) = self.iter().partition(|x| {
+            callback
+                .zval
+                .try_call(vec![&x.inner])
+                .unwrap()
+                .bool()
+                .unwrap()
+        });
 
         let mut result = ZendHashTable::new();
 
         let mut left_result = ZendHashTable::new();
         for x in left {
-            left_result.push(x);
+            left_result.push(x.inner);
         }
 
         let mut right_result = ZendHashTable::new();
         for x in right {
-            right_result.push(x);
+            right_result.push(x.inner);
         }
 
         result.push(left_result);
@@ -206,7 +227,7 @@ impl ArrayIterator {
     pub fn fold(&self, initial: &Zval, callback: ZCallable) -> Zval {
         let mut acc = initial.shallow_clone();
         for x in self.iter() {
-            acc = callback.zval.try_call(vec![&acc, &x]).unwrap();
+            acc = callback.zval.try_call(vec![&acc, &x.inner]).unwrap();
         }
 
         acc
@@ -215,9 +236,9 @@ impl ArrayIterator {
     pub fn reduce(&self, callback: ZCallable) -> Option<Zval> {
         self.iter().fold(None, |acc, x| {
             if let Some(acc) = acc {
-                Some(callback.zval.try_call(vec![&acc, &x]).unwrap())
+                Some(callback.zval.try_call(vec![&acc, &x.inner]).unwrap())
             } else {
-                Some(x)
+                Some(x.inner)
             }
         })
     }
@@ -225,23 +246,43 @@ impl ArrayIterator {
     // TODO: try_reduce
 
     pub fn all(&self, callback: ZCallable) -> bool {
-        self.iter()
-            .all(|x| callback.zval.try_call(vec![&x]).unwrap().bool().unwrap())
+        self.iter().all(|x| {
+            callback
+                .zval
+                .try_call(vec![&x.inner])
+                .unwrap()
+                .bool()
+                .unwrap()
+        })
     }
 
     pub fn any(&self, callback: ZCallable) -> bool {
-        self.iter()
-            .any(|x| callback.zval.try_call(vec![&x]).unwrap().bool().unwrap())
+        self.iter().any(|x| {
+            callback
+                .zval
+                .try_call(vec![&x.inner])
+                .unwrap()
+                .bool()
+                .unwrap()
+        })
     }
 
     pub fn find(&self, callback: ZCallable) -> Option<Zval> {
         self.iter()
-            .find(|x| callback.zval.try_call(vec![x]).unwrap().bool().unwrap())
+            .find(|x| {
+                callback
+                    .zval
+                    .try_call(vec![&x.inner])
+                    .unwrap()
+                    .bool()
+                    .unwrap()
+            })
+            .map(|x| x.inner)
     }
 
     pub fn find_map(&self, callback: ZCallable) -> Option<Zval> {
         self.iter().find_map(|x| {
-            let res = callback.zval.try_call(vec![&x]).unwrap();
+            let res = callback.zval.try_call(vec![&x.inner]).unwrap();
             if res.is_null() {
                 None
             } else {
@@ -252,23 +293,66 @@ impl ArrayIterator {
 
     pub fn position(&self, callback: ZCallable) -> Option<i64> {
         self.iter()
-            .position(|x| callback.zval.try_call(vec![&x]).unwrap().bool().unwrap())
+            .position(|x| {
+                callback
+                    .zval
+                    .try_call(vec![&x.inner])
+                    .unwrap()
+                    .bool()
+                    .unwrap()
+            })
             .map(|x| x as i64)
     }
 
     // TODO: rposition
 
-    // TODO: max
+    pub fn max(&self) -> Option<Zval> {
+        self.iter().max().map(|x| x.inner)
+    }
 
-    // TODO: min
+    pub fn min(&self) -> Option<Zval> {
+        self.iter().min().map(|x| x.inner)
+    }
 
-    // TODO: max_by_key
+    pub fn max_by_key(&self, callback: ZCallable) -> Option<Zval> {
+        self.iter()
+            .max_by_key(|x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
+            .map(|x| x.inner)
+    }
 
-    // TODO: max_by
+    pub fn max_by(&self, callback: ZCallable) -> Option<Zval> {
+        self.iter()
+            .max_by(|x, y| {
+                callback
+                    .zval
+                    .try_call(vec![&x.inner, &y.inner])
+                    .unwrap()
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+            })
+            .map(|x| x.inner)
+    }
 
-    // TODO: min_by_key
+    pub fn min_by_key(&self, callback: ZCallable) -> Option<Zval> {
+        self.iter()
+            .min_by_key(|x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
+            .map(|x| x.inner)
+    }
 
-    // TODO: min_by
+    pub fn min_by(&self, callback: ZCallable) -> Option<Zval> {
+        self.iter()
+            .min_by(|x, y| {
+                callback
+                    .zval
+                    .try_call(vec![&x.inner, &y.inner])
+                    .unwrap()
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+            })
+            .map(|x| x.inner)
+    }
 
     // TODO: rev
 
@@ -278,101 +362,145 @@ impl ArrayIterator {
 
     // TODO: product
 
-    // TODO: cmp
+    pub fn cmp(&self, other: &ArrayIterator) -> i8 {
+        match self.iter().cmp(other.iter()) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        }
+    }
 
-    // TODO: partial_cmp
+    pub fn partial_cmp(&self, other: &ArrayIterator) -> Option<i8> {
+        match self.iter().partial_cmp(other.iter()) {
+            Some(std::cmp::Ordering::Less) => Some(-1),
+            Some(std::cmp::Ordering::Equal) => Some(0),
+            Some(std::cmp::Ordering::Greater) => Some(1),
+            None => None,
+        }
+    }
 
-    // TODO: eq
+    pub fn eq(&self, other: &ArrayIterator) -> bool {
+        self.iter().eq(other.iter())
+    }
 
-    // TODO: ne
+    pub fn ne(&self, other: &ArrayIterator) -> bool {
+        self.iter().ne(other.iter())
+    }
 
-    // TODO: lt
+    pub fn lt(&self, other: &ArrayIterator) -> bool {
+        self.iter().lt(other.iter())
+    }
 
-    // TODO: le
+    pub fn le(&self, other: &ArrayIterator) -> bool {
+        self.iter().le(other.iter())
+    }
 
-    // TODO: gt
+    pub fn gt(&self, other: &ArrayIterator) -> bool {
+        self.iter().gt(other.iter())
+    }
 
-    // TODO: ge
+    pub fn ge(&self, other: &ArrayIterator) -> bool {
+        self.iter().ge(other.iter())
+    }
 
     pub fn first(&self) -> Option<Zval> {
-        self.iter().next()
+        self.iter().next().map(|x| x.inner)
     }
 }
 
 impl ArrayIterator {
-    pub fn iter(&self) -> Box<(dyn Iterator<Item = Zval> + '_)> {
+    fn iter(&self) -> Box<dyn Iterator<Item = ZVal> + '_> {
+        Into::<Box<dyn Iterator<Item = ZVal>>>::into(self)
+    }
+}
+
+impl<'a> Into<Box<dyn Iterator<Item = ZVal> + 'a>> for &'a ArrayIterator {
+    fn into(self) -> Box<(dyn Iterator<Item = ZVal> + 'a)> {
         let mut iter: Box<dyn Iterator<Item = _>> =
-            Box::new(self.inner.iter().map(|x| x.shallow_clone()));
+            Box::new(self.inner.array().unwrap().values().map(|x| x.into()));
+
         for chain in &self.chain {
-            iter =
-                match chain {
-                    Iter::Chain { other } => {
-                        let other = ZendClassObject::<ArrayIterator>::from_zend_obj(
-                            &other.inner.object().unwrap(),
-                        )
-                        .unwrap();
-                        Box::new(iter.chain(other.iter()))
-                    }
-                    Iter::Zip { other } => {
-                        let other = ZendClassObject::<ArrayIterator>::from_zend_obj(
-                            &other.inner.object().unwrap(),
-                        )
-                        .unwrap();
-                        Box::new(iter.zip(other.iter()).map(|(x, y)| {
-                            let mut arr = ZendHashTable::new();
-                            arr.push(x);
-                            arr.push(y);
-                            arr.into_zval(false).unwrap()
-                        }))
-                    }
-                    Iter::Map { callback } => {
-                        Box::new(iter.map(move |x| callback.zval.try_call(vec![&x]).unwrap()))
-                    }
-                    Iter::Filter { callback } => {
-                        Box::new(iter.filter(move |x| {
-                            callback.zval.try_call(vec![x]).unwrap().bool().unwrap()
-                        }))
-                    }
-                    Iter::FilterMap { callback } => Box::new(
-                        iter.map(|x| callback.zval.try_call(vec![&x]).unwrap())
-                            .filter(move |x| !x.is_null()),
-                    ),
-                    Iter::Enumerate => Box::new(iter.enumerate().map(|(i, x)| {
+            iter = match chain {
+                Iter::Chain { other } => {
+                    let other = ZendClassObject::<ArrayIterator>::from_zend_obj(
+                        &other.inner.object().unwrap(),
+                    )
+                    .unwrap();
+                    Box::new(iter.chain(other.iter()))
+                }
+                Iter::Zip { other } => {
+                    let other = ZendClassObject::<ArrayIterator>::from_zend_obj(
+                        &other.inner.object().unwrap(),
+                    )
+                    .unwrap();
+                    Box::new(iter.zip(other.iter()).map(|(x, y)| {
                         let mut arr = ZendHashTable::new();
-                        arr.push(i);
-                        arr.push(x);
-                        arr.into_zval(false).unwrap()
-                    })),
-                    Iter::SkipWhile { callback } => Box::new(iter.skip_while(move |x| {
-                        callback.zval.try_call(vec![x]).unwrap().bool().unwrap()
-                    })),
-                    Iter::TakeWhile { callback } => Box::new(iter.take_while(move |x| {
-                        callback.zval.try_call(vec![x]).unwrap().bool().unwrap()
-                    })),
-                    Iter::MapWhile { callback } => Box::new(
-                        iter.map(move |x| callback.zval.try_call(vec![&x]).unwrap())
-                            .take_while(|x| !x.is_null()),
-                    ),
-                    Iter::Skip(n) => Box::new(iter.skip(*n)),
-                    Iter::Take(n) => Box::new(iter.take(*n)),
-                    Iter::FlatMap { callback } => Box::new(iter.flat_map(move |x| {
-                        let arr = callback.zval.try_call(vec![&x]).unwrap();
-                        let arr = arr.array().unwrap();
-                        arr.values().map(|x| x.shallow_clone()).collect::<Vec<_>>()
-                    })),
-                    Iter::Flatten => Box::new(iter.flat_map(|x| {
-                        if x.is_array() {
-                            let arr = x.array().unwrap();
-                            arr.values().map(|x| x.shallow_clone()).collect::<Vec<_>>()
-                        } else {
-                            vec![x]
-                        }
-                    })),
-                    Iter::Fuse => return Box::new(iter.take_while(|x| !x.is_null())),
-                    Iter::Inspect { callback } => Box::new(iter.inspect(move |x| {
-                        callback.zval.try_call(vec![x]).unwrap();
-                    })),
-                };
+                        arr.push(x.inner);
+                        arr.push(y.inner);
+                        arr.into_zval(false).unwrap().into()
+                    }))
+                }
+                Iter::Map { callback } => Box::new(
+                    iter.map(move |x| callback.zval.try_call(vec![&x.inner]).unwrap().into()),
+                ),
+                Iter::Filter { callback } => Box::new(iter.filter(move |x| {
+                    callback
+                        .zval
+                        .try_call(vec![&x.inner])
+                        .unwrap()
+                        .bool()
+                        .unwrap()
+                })),
+                Iter::FilterMap { callback } => Box::new(
+                    iter.map(|x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
+                        .filter(|x| !x.inner.is_null()),
+                ),
+                Iter::Enumerate => Box::new(iter.enumerate().map(|(i, x)| {
+                    let mut arr = ZendHashTable::new();
+                    arr.push(i);
+                    arr.push(x.inner);
+                    arr.into_zval(false).unwrap().into()
+                })),
+                Iter::SkipWhile { callback } => Box::new(iter.skip_while(move |x| {
+                    callback
+                        .zval
+                        .try_call(vec![&x.inner])
+                        .unwrap()
+                        .bool()
+                        .unwrap()
+                })),
+                Iter::TakeWhile { callback } => Box::new(iter.take_while(move |x| {
+                    callback
+                        .zval
+                        .try_call(vec![&x.inner])
+                        .unwrap()
+                        .bool()
+                        .unwrap()
+                })),
+                Iter::MapWhile { callback } => Box::new(
+                    iter.map(move |x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
+                        .take_while(|x| !x.inner.is_null()),
+                ),
+                Iter::Skip(n) => Box::new(iter.skip(*n)),
+                Iter::Take(n) => Box::new(iter.take(*n)),
+                Iter::FlatMap { callback } => Box::new(iter.flat_map(move |x| {
+                    let arr = callback.zval.try_call(vec![&x.inner]).unwrap();
+                    let arr = arr.array().unwrap();
+                    arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                })),
+                Iter::Flatten => Box::new(iter.flat_map(|x| {
+                    if x.inner.is_array() {
+                        let arr = x.inner.array().unwrap();
+                        arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                    } else {
+                        vec![x]
+                    }
+                })),
+                Iter::Fuse => return Box::new(iter.take_while(|x| !x.inner.is_null())),
+                Iter::Inspect { callback } => Box::new(iter.inspect(move |x| {
+                    callback.zval.try_call(vec![&x.inner]).unwrap();
+                })),
+            };
         }
 
         iter
@@ -396,6 +524,7 @@ enum Iter {
     Flatten,
     Fuse,
     Inspect { callback: ZCallable },
+    // Rev,
     // Cycle,
 }
 
@@ -448,6 +577,83 @@ impl<'a> FromZval<'a> for ZIterRS {
         })
     }
 }
+
+pub struct ZVal {
+    inner: Zval,
+}
+
+impl Clone for ZVal {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.shallow_clone(),
+        }
+    }
+}
+
+impl From<&Zval> for ZVal {
+    fn from(zval: &Zval) -> Self {
+        Self {
+            inner: zval.shallow_clone(),
+        }
+    }
+}
+
+impl From<Zval> for ZVal {
+    fn from(zval: Zval) -> Self {
+        Self { inner: zval }
+    }
+}
+
+impl Ord for ZVal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+impl PartialOrd for ZVal {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.inner.is_null() && other.inner.is_null() {
+            return Some(std::cmp::Ordering::Equal);
+        }
+        if self.inner.is_bool() && other.inner.is_bool() {
+            return Some(self.inner.bool().unwrap().cmp(&other.inner.bool().unwrap()));
+        }
+        if self.inner.is_double() && other.inner.is_double() {
+            return Some(
+                self.inner
+                    .double()
+                    .unwrap()
+                    .partial_cmp(&other.inner.double().unwrap())
+                    .unwrap(),
+            );
+        }
+        if self.inner.is_long() && other.inner.is_long() {
+            return Some(self.inner.long().unwrap().cmp(&other.inner.long().unwrap()));
+        }
+        if self.inner.is_string() && other.inner.is_string() {
+            return Some(
+                self.inner
+                    .string()
+                    .unwrap()
+                    .cmp(&other.inner.string().unwrap()),
+            );
+        }
+
+        if self.inner.is_identical(&other.inner) {
+            Some(std::cmp::Ordering::Equal)
+        } else {
+            None
+        }
+    }
+}
+
+impl PartialEq for ZVal {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.is_identical(&other.inner)
+    }
+}
+
+impl Eq for ZVal {}
 
 // struct ZVec<T>
 // where

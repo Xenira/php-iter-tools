@@ -218,4 +218,104 @@ class RSTest extends TestCase
         $this->assertEquals(2, $this->iterator->position(fn($x) => $x === 3));
         $this->assertNull($this->iterator->position(fn($x) => $x === 6));
     }
+
+    public function testMax(): void
+    {
+        $this->assertEquals(5, $this->iterator->max());
+        $this->assertNull((new \ArrayIter([]))->max());
+    }
+
+    public function testMin(): void
+    {
+        $this->assertEquals(1, $this->iterator->min());
+        $this->assertNull((new \ArrayIter([]))->min());
+    }
+
+    public function testMaxByKey(): void
+    {
+        $this->assertEquals(5, $this->iterator->maxByKey(fn($x) => $x * 2));
+        $this->assertEquals(1, $this->iterator->maxByKey(fn($x) => $x * -2));
+        $this->assertNull((new \ArrayIter([]))->maxByKey(fn($x) => $x * 2));
+    }
+
+    public function testMaxBy(): void
+    {
+        $this->assertEquals(5, $this->iterator->maxBy(fn($x, $y) => $x <=> $y));
+        $this->assertEquals(1, $this->iterator->maxBy(fn($x, $y) => $y <=> $x));
+        $this->assertNull((new \ArrayIter([]))->maxBy(fn($x, $y) => $x <=> $y));
+    }
+
+    public function testMinByKey(): void
+    {
+        $this->assertEquals(1, $this->iterator->minByKey(fn($x) => $x * 2));
+        $this->assertEquals(5, $this->iterator->minByKey(fn($x) => $x * -2));
+        $this->assertNull((new \ArrayIter([]))->minByKey(fn($x) => $x * 2));
+    }
+
+    public function testMinBy(): void
+    {
+        $this->assertEquals(1, $this->iterator->minBy(fn($x, $y) => $x <=> $y));
+        $this->assertEquals(5, $this->iterator->minBy(fn($x, $y) => $y <=> $x));
+        $this->assertNull((new \ArrayIter([]))->minBy(fn($x, $y) => $x <=> $y));
+    }
+
+    public function testCmp(): void
+    {
+        $this->assertEquals(-1, $this->iterator->cmp(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertEquals(0, $this->iterator->cmp(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertEquals(1, $this->iterator->cmp(new \ArrayIter([1, 2, 3, 4, 4])));
+    }
+
+    public function testPartialCmp(): void
+    {
+        $this->assertEquals(-1, $this->iterator->partialCmp(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertEquals(0, $this->iterator->partialCmp(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertEquals(1, $this->iterator->partialCmp(new \ArrayIter([1, 2, 3, 4, 4])));
+        $this->assertNull($this->iterator->partialCmp(new \ArrayIter([1, 2, 3, 4, null])));
+    }
+
+    public function testEq(): void
+    {
+        $this->assertTrue($this->iterator->eq(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertFalse($this->iterator->eq(new \ArrayIter([1, 2, 3, 4, 6])));
+    }
+
+    public function testNe(): void
+    {
+        $this->assertTrue($this->iterator->ne(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertFalse($this->iterator->ne(new \ArrayIter([1, 2, 3, 4, 5])));
+    }
+
+    public function testLt(): void
+    {
+        $this->assertTrue($this->iterator->lt(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertFalse($this->iterator->lt(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertFalse($this->iterator->lt(new \ArrayIter([1, 2, 3, 4, 4])));
+    }
+
+    public function testLe(): void
+    {
+        $this->assertTrue($this->iterator->le(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertTrue($this->iterator->le(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertFalse($this->iterator->le(new \ArrayIter([1, 2, 3, 4, 4])));
+    }
+
+    public function testGt(): void
+    {
+        $this->assertFalse($this->iterator->gt(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertFalse($this->iterator->gt(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertTrue($this->iterator->gt(new \ArrayIter([1, 2, 3, 4, 4])));
+    }
+
+    public function testGe(): void
+    {
+        $this->assertFalse($this->iterator->ge(new \ArrayIter([1, 2, 3, 4, 6])));
+        $this->assertTrue($this->iterator->ge(new \ArrayIter([1, 2, 3, 4, 5])));
+        $this->assertTrue($this->iterator->ge(new \ArrayIter([1, 2, 3, 4, 4])));
+    }
+
+    public function testFirst()
+    {
+        $this->assertEquals(1, $this->iterator->first());
+    }
 }

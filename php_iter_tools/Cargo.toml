@@ -2,6 +2,7 @@
 name = "php_iter_tools"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.78.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,7 +10,10 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-ext-php-rs = { version = "0.12.0", features = ["anyhow"] }
+anyhow = "1.0.82"
+dyn-clone = "1.0.17"
+ext-php-rs = { path = "../../ext-php-rs/", features = ["anyhow"] }
 
 [profile.release]
 strip = "debuginfo"
+lto=true

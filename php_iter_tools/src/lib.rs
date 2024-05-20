@@ -1,15 +1,15 @@
 #![feature(trait_upcasting)]
 
-use std::{borrow::BorrowMut, ptr, usize};
+use std::{ptr, sync::Arc};
 
 use anyhow::Result;
+use dyn_clone::DynClone;
 use ext_php_rs::{
     boxed::ZBox,
     convert::{FromZval, IntoZval},
     ffi::{
         self, _call_user_function_impl, zend_call_function, zend_fcall_info_init,
-        zend_hash_get_current_data_ex, zend_hash_internal_pointer_reset_ex,
-        zend_hash_move_backwards_ex, zend_hash_move_forward_ex, HashPosition,
+        zend_hash_get_current_data_ex, HashPosition,
     },
     flags::DataType,
     prelude::*,
@@ -21,12 +21,6 @@ use crate::macros::match_iter_type;
 
 mod macros;
 
-#[php_class(name = "Iter")]
-pub struct ZDoubleEnded {
-    // inner: ZVal,
-    inner: Box<dyn Iterator<Item = ZVal> + 'static>,
-}
-
 // impl<'a> Into<Box<(dyn Iterator<Item = ZVal> + 'a)>> for IterBuilder {
 //     fn into(self) -> Box<(dyn Iterator<Item = ZVal> + 'a)> {
 //         let inner = self.inner.inner;
@@ -37,14 +31,14 @@ pub struct ZDoubleEnded {
 //     }
 // }
 
-pub struct SimpleZValIter<'a> {
-    inner: &'a ZendHashTable,
+pub struct SimpleZValIter {
+    inner: Zval,
     size: HashPosition,
     pos_front: HashPosition,
     pos_back: HashPosition,
 }
 
-impl<'a> Iterator for SimpleZValIter<'a> {
+impl Iterator for SimpleZValIter {
     type Item = ZVal;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -54,7 +48,7 @@ impl<'a> Iterator for SimpleZValIter<'a> {
 
         let val = unsafe {
             &*zend_hash_get_current_data_ex(
-                self.inner as *const ZendHashTable as *mut ZendHashTable,
+                self.inner.value.arr as *const ZendHashTable as *mut ZendHashTable,
                 &mut self.pos_front as &mut _,
             )
         };
@@ -69,13 +63,13 @@ impl<'a> Iterator for SimpleZValIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for SimpleZValIter<'a> {
+impl ExactSizeIterator for SimpleZValIter {
     fn len(&self) -> usize {
         self.size as usize
     }
 }
 
-impl<'a> DoubleEndedIterator for SimpleZValIter<'a> {
+impl DoubleEndedIterator for SimpleZValIter {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.pos_back == self.pos_front {
             return None;
@@ -84,7 +78,7 @@ impl<'a> DoubleEndedIterator for SimpleZValIter<'a> {
         self.pos_back -= 1;
         let val = unsafe {
             &*zend_hash_get_current_data_ex(
-                self.inner as *const ZendHashTable as *mut ZendHashTable,
+                self.inner.value.arr as *const ZendHashTable as *mut ZendHashTable,
                 &mut self.pos_back as &mut _,
             )
         };
@@ -96,26 +90,33 @@ impl<'a> DoubleEndedIterator for SimpleZValIter<'a> {
     }
 }
 
-#[php_class(name = "ArrayIter")]
-pub struct ArrayIterator {
-    inner: ZVal,
-    chain: Vec<Iter>,
-    double_ended: bool,
-    exact_size: bool,
-    // inner: Box<dyn Iterator<Item = Box<dyn IntoZvalDyn>> + 'static>,
+impl Clone for SimpleZValIter {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.shallow_clone(),
+            size: self.size,
+            pos_front: self.pos_front,
+            pos_back: self.pos_back,
+        }
+    }
 }
 
-impl<'a> IntoIterator for &'a ZVal {
+#[php_class(name = "ArrayIter")]
+pub struct ArrayIterator {
+    iter: Option<IterBox<'static>>,
+}
+
+impl IntoIterator for ZVal {
     type Item = ZVal;
-    type IntoIter = SimpleZValIter<'a>;
+    type IntoIter = SimpleZValIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let arr = self.inner.array().unwrap();
+        let array = self.inner.array().unwrap();
         let pos_front = 0;
-        let size = arr.nNumOfElements;
+        let size = array.nNumOfElements;
         let pos_back = size;
         return SimpleZValIter {
-            inner: arr,
+            inner: self.inner,
             size,
             pos_front,
             pos_back,
@@ -125,7 +126,6 @@ impl<'a> IntoIterator for &'a ZVal {
 
 #[php_impl]
 impl ArrayIterator {
-    #[constructor]
     pub fn new(vec: &Zval) -> Self {
         // let inner = vec
         //     .array()
@@ -135,60 +135,146 @@ impl ArrayIterator {
         //     .collect::<Vec<_>>();
 
         Self {
-            inner: ZVal::from(vec),
-            chain: Vec::new(),
-            double_ended: true,
-            exact_size: true,
+            iter: Some(IterBox::DoubleEndedExactSize(Box::new(
+                ZVal::from(vec).into_iter(),
+            ))),
         }
     }
 
     pub fn count(&mut self) -> Result<i64> {
-        Ok(self.iter()?.count() as i64)
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.count() as i64,
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn last(&mut self) -> Result<Option<Zval>> {
-        Ok(self.iter()?.last().map(|x| x.inner))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.last().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn nth(&mut self, n: i64) -> Result<Option<Zval>> {
-        Ok(self.iter()?.nth(n as usize).map(|x| x.inner))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.nth(n as usize).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn chain(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
     ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let otherIterator = other.clone();
-        let otherIterator =
-            ZendClassObject::<ArrayIterator>::from_zend_obj(otherIterator.inner.object().unwrap())
-                .unwrap();
+        let iter = this
+            .iter
+            .take()
+            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+        let mut other_iterator = other.clone();
+        let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
+            other_iterator.inner.object_mut().unwrap(),
+        )
+        .unwrap();
 
-        this.chain.push(Iter::Chain { other });
-        this.exact_size = false;
-        this.double_ended = otherIterator.double_ended;
+        this.iter = Some(match_nested_iter_type!(
+            iter,
+            other_iterator,
+            other_iterator.iter.take().ok_or(anyhow::anyhow!("Iterator is not valid"))?,
+            Box::new(iter.chain(other_iterator)),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded :
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
+                IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator;
+            IterBox::ExactSize | IterBox::Iterator :
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
         Ok(this)
     }
 
     pub fn zip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Zip { other });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this
+            .iter
+            .take()
+            .ok_or(anyhow::anyhow!("Iterator is not valid"))
+            .unwrap();
+        let mut other_iterator = other.clone();
+        let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
+            other_iterator.inner.object_mut().unwrap(),
+        )
+        .unwrap();
+
+        this.iter = Some(match_nested_iter_type!(
+            iter,
+            other_iterator,
+            other_iterator.iter.take().ok_or(anyhow::anyhow!("Iterator is not valid"))?,
+            Box::new(iter.zip(other_iterator).map(
+                |(x, y)| {
+                    let mut arr = ZendHashTable::new();
+                    arr.push(x.inner);
+                    arr.push(y.inner);
+                    arr.into_zval(false).unwrap().into()
+                },
+            )),
+            IterBox::DoubleEndedExactSize:
+                IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+                IterBox::ExactSize => IterBox::ExactSize,
+                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
+            IterBox::ExactSize:
+                IterBox::DoubleEndedExactSize | IterBox::ExactSize => IterBox::ExactSize,
+                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
+            IterBox::DoubleEnded | IterBox::Iterator:
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
+    #[allow(unreachable_patterns)]
     pub fn map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Map { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        // this.chain.push(Iter::Map { callback });
+        let iter = this
+            .iter
+            .take()
+            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+        let mut callback = callback;
+
+        this.iter = Some(match_iter_same_type!(
+            iter,
+            Box::new(iter.map(move |x| { call_cached(&mut callback, [x.inner]).into() })),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        )?);
+        Ok(this)
     }
 
     pub fn for_each(&mut self, callback: ZCallable) -> Result<()> {
-        self.iter()?.for_each(|x| {
-            callback.zval.try_call(vec![&x.inner]).unwrap();
-        });
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.for_each(|x| {
+                    call_cached(&mut callback, [x.inner]);
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })?;
 
         Ok(())
     }
@@ -196,120 +282,297 @@ impl ArrayIterator {
     pub fn filter(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Filter { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.filter(move |x| {
+                call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
+                    .bool()
+                    .unwrap()
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
+            IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn filter_map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::FilterMap { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(
+                iter.map(move |x| ZVal::from(call_user_func_array(&callback.zval, [x.inner.shallow_clone()])))
+                    .filter(|x| !x.inner.is_null())
+            ),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
+            IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn enumerate(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Enumerate);
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.enumerate().map(|(i, x)| {
+                let mut arr = ZendHashTable::new();
+                arr.push(i);
+                arr.push(x.inner);
+                arr.into_zval(false).unwrap().into()
+            })),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn skip_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::SkipWhile { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.skip_while(move |x| {
+                call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
+                    .bool()
+                    .unwrap()
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn take_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::TakeWhile { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.take_while(move |x| {
+                call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
+                    .bool()
+                    .unwrap()
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn map_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::MapWhile { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(
+                iter.map(move |x| ZVal::from(call_user_func_array(&callback.zval, [x.inner.shallow_clone()])))
+                    .take_while(|x| !x.inner.is_null())
+            ),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn skip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Skip(n as usize));
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.skip(n as usize)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn take(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Take(n as usize));
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.take(n as usize)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
+
+    // fn scan(
+    //     #[this] this: &mut ZendClassObject<ArrayIterator>,
+    //     initial: ZVal,
+    //     callback: ZCallable,
+    // ) -> &mut ZendClassObject<ArrayIterator> {
+    //     this.chain.push(Iter::Scan {
+    //         initial: initial.inner,
+    //         callback,
+    //     });
+    //     this.double_ended = false;
+    //     this.exact_size = false;
+    //     this
+    // }
 
     fn flat_map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::FlatMap { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        let mut callback = callback;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.flat_map(move |x| {
+                let arr = call_cached(&mut callback, [x.inner]);
+                if let Some(arr) = arr.array() {
+                    arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                } else {
+                    vec![]
+                }
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
+            IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     fn flatten(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Flatten);
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.flat_map(|x| {
+                if x.inner.is_array() {
+                    let arr = x.inner.array().unwrap();
+                    arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                } else {
+                    vec![x]
+                }
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
+            IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
-    fn fuse(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Fuse);
-        this
+    fn fuse(#[this] this: &mut ZendClassObject<Self>) -> Result<&mut ZendClassObject<Self>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        // Not sure how useful this is atm. But keeping it for rust interface compatibility
+        this.iter = Some(match_iter_same_type!(
+            iter,
+            Box::new(iter.fuse()),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     fn inspect(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> &mut ZendClassObject<ArrayIterator> {
-        this.chain.push(Iter::Inspect { callback });
-        this
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_same_type!(
+            iter,
+            Box::new(iter.inspect(move |x| {
+                call_user_func_array(&callback.zval, [x.inner.shallow_clone()]);
+            })),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        )?);
+
+        Ok(this)
     }
 
     pub fn collect(&mut self) -> Result<Vec<Zval>> {
-        Ok(self.iter()?.map(|x| x.inner).collect::<Vec<_>>())
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.map(|x| x.inner).collect::<Vec<_>>(),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     // TODO: try_collect
 
     pub fn collect_into(&mut self, collection: &mut Zval) -> Result<()> {
         let arr: &mut ZendHashTable = collection.array_mut().unwrap();
-        for x in self.iter()? {
-            arr.push(x.inner);
-        }
-
-        Ok(())
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                for x in iter {
+                    arr.push(x.inner);
+                },
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn partition(&mut self, callback: ZCallable) -> Result<ZBox<ZendHashTable>> {
-        let (left, right): (Vec<ZVal>, Vec<ZVal>) = self.iter()?.partition(|x| {
-            callback
-                .zval
-                .try_call(vec![&x.inner])
-                .unwrap()
-                .bool()
-                .unwrap()
-        });
+        let mut callback = callback;
+        let (left, right): (Vec<ZVal>, Vec<ZVal>) =  self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.partition(|x| {
+                    call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })?; // TODO: check if shallow_clone is necessary
 
         let mut result = ZendHashTable::new();
 
@@ -330,141 +593,184 @@ impl ArrayIterator {
     }
 
     // TODO: try_fold
-
     pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval> {
         let mut acc = initial.shallow_clone();
-        for x in self.iter()? {
-            acc = callback.zval.try_call(vec![&acc, &x.inner]).unwrap();
-        }
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                for x in iter {
+                    acc = call_cached(&mut callback, [acc.shallow_clone(), x.inner]);
+                },
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })?; // TODO: Check if correct with shallow_clone
 
         Ok(acc)
     }
 
+    /// Reduces the elements to a single one, by repeatedly applying a reducing operation.
+    ///
+    /// If the iterator is empty, returns None; otherwise, returns the result of the reduction.
+    ///
+    /// The reducing function is a closure with two arguments: an ‘accumulator’, and an element. For iterators with at least one element, this is the same as fold() with the first element of the iterator as the initial accumulator value, folding every subsequent element into it.
     pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self.iter()?.fold(None, |acc, x| {
-            if let Some(acc) = acc {
-                Some(callback.zval.try_call(vec![&acc, &x.inner]).unwrap())
-            } else {
-                Some(x.inner)
-            }
-        }))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.fold(None, |acc, x| {
+                    if let Some(acc) = acc {
+                        Some(call_cached(&mut callback, [acc, x.inner]))
+                    } else {
+                        Some(x.inner)
+                    }
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     // TODO: try_reduce
 
     pub fn all(&mut self, callback: ZCallable) -> Result<bool> {
-        Ok(self.iter()?.all(|x| {
-            callback
-                .zval
-                .try_call(vec![&x.inner])
-                .unwrap()
-                .bool()
-                .unwrap()
-        }))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.all(|x| {
+                    call_cached(&mut callback, [x.inner]).bool().unwrap()
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn any(&mut self, callback: ZCallable) -> Result<bool> {
-        Ok(self.iter()?.any(|x| {
-            callback
-                .zval
-                .try_call(vec![&x.inner])
-                .unwrap()
-                .bool()
-                .unwrap()
-        }))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.any(|x| {
+                    call_cached(&mut callback, [x.inner]).bool().unwrap()
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn find(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self
-            .iter()?
-            .find(|x| {
-                callback
-                    .zval
-                    .try_call(vec![&x.inner])
-                    .unwrap()
-                    .bool()
-                    .unwrap()
-            })
-            .map(|x| x.inner))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.find(|x| {
+                    call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
+                }).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self.iter()?.find_map(|x| {
-            let res = callback.zval.try_call(vec![&x.inner]).unwrap();
-            if res.is_null() {
-                None
-            } else {
-                Some(res)
-            }
-        }))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.find_map(|x| {
+                    let res = call_cached(&mut callback, [x.inner]);
+                    if res.is_null() {
+                        None
+                    } else {
+                        Some(res)
+                    }
+                }),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn position(&mut self, callback: ZCallable) -> Result<Option<i64>> {
-        Ok(self
-            .iter()?
-            .position(|x| {
-                callback
-                    .zval
-                    .try_call(vec![&x.inner])
-                    .unwrap()
-                    .bool()
-                    .unwrap()
-            })
-            .map(|x| x as i64))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.position(|x| {
+                    call_cached(&mut callback, [x.inner]).bool().unwrap()
+                }).map(|x| x as i64),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     // TODO: rposition
 
     pub fn max(&mut self) -> Result<Option<Zval>> {
-        Ok(self.iter()?.max().map(|x| x.inner))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.max().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn min(&mut self) -> Result<Option<Zval>> {
-        Ok(self.iter()?.min().map(|x| x.inner))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.min().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn max_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self
-            .iter()?
-            .max_by_key(|x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
-            .map(|x| x.inner))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.max_by_key(|x| ZVal { inner: call_cached(&mut callback, [x.inner.shallow_clone()]) } ).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn max_by(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self
-            .iter()?
-            .max_by(|x, y| {
-                callback
-                    .zval
-                    .try_call(vec![&x.inner, &y.inner])
-                    .unwrap()
-                    .long()
-                    .unwrap()
-                    .cmp(&0)
-            })
-            .map(|x| x.inner))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.max_by(|x, y| {
+                    call_cached(&mut callback, [x.inner.shallow_clone(), y.inner.shallow_clone()]).long().unwrap().cmp(&0)
+                }).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn min_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self
-            .iter()?
-            .min_by_key(|x| ZVal::from(callback.zval.try_call(vec![&x.inner]).unwrap()))
-            .map(|x| x.inner))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.min_by_key(|x| ZVal { inner: call_cached(&mut callback, [x.inner.shallow_clone()]) } ).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     pub fn min_by(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
-        Ok(self
-            .iter()?
-            .min_by(|x, y| {
-                callback
-                    .zval
-                    .try_call(vec![&x.inner, &y.inner])
-                    .unwrap()
-                    .long()
-                    .unwrap()
-                    .cmp(&0)
-            })
-            .map(|x| x.inner))
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.min_by(|x, y| {
+                    call_cached(&mut callback, [x.inner.shallow_clone(), y.inner.shallow_clone()]).long().unwrap().cmp(&0)
+                }).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+            )
+        })
     }
 
     // TODO: unzip
@@ -472,8 +778,14 @@ impl ArrayIterator {
     pub fn rev(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
     ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        anyhow::ensure!(this.double_ended, "rev() requires a double-ended iterator");
-        this.chain.push(Iter::Rev);
+        let iter = this.iter.take().ok_or(anyhow::anyhow!(
+            "Iterator is not valid. This is most likely because the iterator has already been consumed."
+        ))?;
+        this.iter = Some(match_iter_same_type!(
+            iter,
+            Box::new(iter.rev()),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+        )?);
 
         Ok(this)
     }
@@ -483,7 +795,19 @@ impl ArrayIterator {
     // TODO: product
 
     pub fn cmp(&mut self, other: &mut ArrayIterator) -> Result<i8> {
-        Ok(match self.iter()?.cmp(other.iter()?) {
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.cmp(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        }).map(|x| match x {
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
@@ -491,7 +815,19 @@ impl ArrayIterator {
     }
 
     pub fn partial_cmp(&mut self, other: &mut ArrayIterator) -> Result<Option<i8>> {
-        Ok(match self.iter()?.partial_cmp(other.iter()?) {
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.partial_cmp(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        }).map(|x| match x {
             Some(std::cmp::Ordering::Less) => Some(-1),
             Some(std::cmp::Ordering::Equal) => Some(0),
             Some(std::cmp::Ordering::Greater) => Some(1),
@@ -500,266 +836,129 @@ impl ArrayIterator {
     }
 
     pub fn eq(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.eq(other.iter()?))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.eq(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
     }
 
     pub fn ne(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.ne(other.iter()?))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.ne(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
     }
 
     pub fn lt(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.lt(other.iter()?))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.lt(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
     }
 
     pub fn le(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.le(other.iter()?))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.le(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
     }
 
     pub fn gt(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.gt(other.iter()?))
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
+                        other,
+                        iter.gt(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
     }
 
     pub fn ge(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        Ok(self.iter()?.ge(other.iter()?))
-    }
-
-    pub fn first(&mut self) -> Result<Option<Zval>> {
-        Ok(self.iter()?.next().map(|x| x.inner))
-    }
-}
-
-impl ArrayIterator {
-    fn iter(&mut self) -> Result<Box<dyn Iterator<Item = ZVal> + '_>> {
-        match self.iter_box()? {
-            IterBox::DoubleEnded(iter) => Ok(iter),
-            IterBox::DoubleEndedExactSize(iter) => Ok(iter),
-            IterBox::ExactSize(iter) => Ok(iter),
-            IterBox::Iterator(iter) => Ok(iter),
-        }
-    }
-
-    fn iter_box(&mut self) -> Result<IterBox<'_>> {
-        Into::<Result<IterBox<'_>>>::into(self)
-    }
-}
-
-impl<'a> Into<Result<IterBox<'a>>> for &'a mut ArrayIterator {
-    #[allow(unreachable_patterns)]
-    fn into(self) -> Result<IterBox<'a>> {
-        let iter = self.inner.into_iter();
-        let mut iter: IterBox<'_> = IterBox::DoubleEndedExactSize(Box::new(iter));
-
-        for chain in self.chain.iter_mut() {
-            iter = match chain {
-                Iter::Chain { other } => {
-                    let other: &mut ZendClassObject<ArrayIterator> =
-                        ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
-                            other.inner.object_mut().unwrap(),
-                        )
-                        .unwrap();
-
-                    match_nested_iter_type!(
-                        iter,
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
+                match_iter_type!(
+                    iter,
+                    match_iter_type!(
                         other,
-                        other.iter_box()?,
-                        Box::new(iter.chain(other)),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded :
-                            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
-                            IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator;
-                        IterBox::ExactSize | IterBox::Iterator :
-                            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                    )?
-                }
-                Iter::Zip { other } => {
-                    let other: &mut ZendClassObject<ArrayIterator> =
-                        ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
-                            other.inner.object_mut().unwrap(),
-                        )
-                        .unwrap();
+                        iter.ge(other),
+                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                    ),
+                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                )?
+            })
+        })
+    }
 
-                    match_nested_iter_type!(
-                        iter,
-                        other,
-                        other.iter_box()?,
-                        Box::new(iter.zip(other).map(
-                            |(x, y)| {
-                                let mut arr = ZendHashTable::new();
-                                arr.push(x.inner);
-                                arr.push(y.inner);
-                                arr.into_zval(false).unwrap().into()
-                            },
-                        )),
-                        IterBox::DoubleEndedExactSize:
-                            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-                            IterBox::ExactSize => IterBox::ExactSize,
-                            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
-                        IterBox::ExactSize:
-                            IterBox::DoubleEndedExactSize | IterBox::ExactSize => IterBox::ExactSize,
-                            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
-                        IterBox::DoubleEnded | IterBox::Iterator:
-                            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                    )?
-                }
-                Iter::Map { ref mut callback } => match_iter_same_type!(
-                    iter,
-                    Box::new(iter.map(move |x| { call_cached(callback, [x.inner]).into() })),
-                    IterBox::DoubleEndedExactSize
-                        | IterBox::DoubleEnded
-                        | IterBox::ExactSize
-                        | IterBox::Iterator
-                )?,
-                Iter::Filter { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.filter(move |x| {
-                        call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
-                            .bool()
-                            .unwrap()
-                    })),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
-                    IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::FilterMap { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(
-                        iter.map(move |x| ZVal::from(call_user_func_array(&callback.zval, [x.inner.shallow_clone()])))
-                            .filter(|x| !x.inner.is_null())
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
-                    IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::Enumerate => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.enumerate().map(|(i, x)| {
-                        let mut arr = ZendHashTable::new();
-                        arr.push(i);
-                        arr.push(x.inner);
-                        arr.into_zval(false).unwrap().into()
-                    })),
-                    IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-                    IterBox::ExactSize => IterBox::ExactSize,
-                    IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::SkipWhile { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.skip_while(move |x| {
-                        call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
-                            .bool()
-                            .unwrap()
-                    })),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::TakeWhile { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.take_while(move |x| {
-                        call_user_func_array(&callback.zval, [x.inner.shallow_clone()])
-                            .bool()
-                            .unwrap()
-                    })),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::MapWhile { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(
-                        iter.map(move |x| ZVal::from(call_user_func_array(&callback.zval, [x.inner.shallow_clone()])))
-                            .take_while(|x| !x.inner.is_null())
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::Skip(n) => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.skip(*n)),
-                    IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-                    IterBox::ExactSize => IterBox::ExactSize,
-                    IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::Take(n) => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.take(*n)),
-                    IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-                    IterBox::ExactSize => IterBox::ExactSize,
-                    IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::FlatMap { callback } => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.flat_map(move |x| {
-                        let arr = call_user_func_array(&callback.zval, [x.inner.shallow_clone()]);
-                        let arr = arr.array().unwrap();
-                        arr.values().map(|x| x.into()).collect::<Vec<_>>()
-                    })),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
-                    IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::Flatten => match_iter_result_type!(
-                    iter,
-                    Box::new(iter.flat_map(|x| {
-                        if x.inner.is_array() {
-                            let arr = x.inner.array().unwrap();
-                            arr.values().map(|x| x.into()).collect::<Vec<_>>()
-                        } else {
-                            vec![x]
-                        }
-                    })),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
-                    IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-                )?,
-                Iter::Fuse => match_iter_same_type!(
-                    iter,
-                    Box::new(
-                        iter.map(|x| if x.inner.is_null() { None } else { Some(x) })
-                            .fuse()
-                            .map(|x| x.unwrap_or(ZVal::null()))
-                    ),
-                    IterBox::DoubleEndedExactSize
-                        | IterBox::DoubleEnded
-                        | IterBox::ExactSize
-                        | IterBox::Iterator
-                )?,
-                Iter::Inspect { callback } => match_iter_same_type!(
-                    iter,
-                    Box::new(iter.inspect(move |x| {
-                        call_user_func_array(&callback.zval, [x.inner.shallow_clone()]);
-                    })),
-                    IterBox::DoubleEndedExactSize
-                        | IterBox::DoubleEnded
-                        | IterBox::ExactSize
-                        | IterBox::Iterator
-                )?,
-                Iter::Rev => match_iter_same_type!(
-                    iter,
-                    Box::new(iter.rev()),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
-                )?,
-            };
-        }
+    // DoubleEndedIterator
+    pub fn next_back(&mut self) -> Result<Option<Zval>> {
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.next_back().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+            )
+        })
+    }
 
-        Ok(iter)
+    pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>> {
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            match_iter_type!(
+                iter,
+                iter.nth_back(n as usize).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+            )
+        })
     }
 }
 
-enum Iter {
-    Chain { other: ZIterRS },
-    Zip { other: ZIterRS },
-    Map { callback: ZCallable },
-    Filter { callback: ZCallable },
-    FilterMap { callback: ZCallable },
-    Enumerate,
-    SkipWhile { callback: ZCallable },
-    TakeWhile { callback: ZCallable },
-    MapWhile { callback: ZCallable },
-    Skip(usize),
-    Take(usize),
-    // Scan { initial: Zval, callback: ZCallable },
-    FlatMap { callback: ZCallable },
-    Flatten,
-    Fuse,
-    Inspect { callback: ZCallable },
-    Rev,
-    // Cycle,
+trait DoubleEndedExactSizeIterator: DoubleEndedIterator + ExactSizeIterator + Iterator {}
+
+impl<T> DoubleEndedExactSizeIterator for T where
+    T: DoubleEndedIterator + ExactSizeIterator + Iterator
+{
 }
-
-trait DoubleEndedExactSizeIterator: DoubleEndedIterator + ExactSizeIterator {}
-
-impl<T> DoubleEndedExactSizeIterator for T where T: DoubleEndedIterator + ExactSizeIterator {}
 
 enum IterBox<'a> {
     DoubleEnded(Box<dyn DoubleEndedIterator<Item = ZVal> + 'a>),
@@ -829,22 +1028,6 @@ fn call_cached<const N: usize>(callback: &mut ZCallable, args: [Zval; N]) -> Zva
 
     retval
 }
-// struct IterWrapper {
-//     inner: Box<dyn Iterator<Item = &'static Zval>>,
-// }
-//
-// impl IterWrapper {rr
-//     fn new(inner: Box<dyn Iterator<Item = &'static Zval>>) -> Self {
-//         Self { inner }
-//     }
-//
-//     fn map(&self, callback: ZVal) -> Self {
-//         let callback = ZendCallable::new_owned(callback.zval).unwrap();
-//         Self {
-//             inner: Box::new(self.inner.map(move |x| callback.try_call(vec![x]).unwrap())),
-//         }
-//     }
-// }
 
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
@@ -929,6 +1112,16 @@ impl ZVal {
     }
 }
 
+impl<'a> FromZval<'a> for ZVal {
+    const TYPE: DataType = DataType::Mixed;
+
+    fn from_zval(zval: &'a Zval) -> Option<Self> {
+        Some(Self {
+            inner: zval.shallow_clone(),
+        })
+    }
+}
+
 impl Clone for ZVal {
     fn clone(&self) -> Self {
         Self {
@@ -1001,26 +1194,3 @@ impl PartialEq for ZVal {
 }
 
 impl Eq for ZVal {}
-
-// struct ZVec<T>
-// where
-//     T: IntoZval,
-// {
-//     vec: Vec<T>,
-// }
-//
-// impl<'a, T> FromZval<'a> for ZVec<T>
-// where
-//     T: IntoZval,
-// {
-//     const TYPE: DataType = DataType::Array;
-//
-//     fn from_zval(zval: &'a Zval) -> Option<Self> {
-//         let mut vec = Vec::new();
-//         for val in zval.array().unwrap().values() {
-//             vec.push(val)
-//         }
-//
-//         Some(ZVec { vec })
-//     }
-// }

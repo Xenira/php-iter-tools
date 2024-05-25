@@ -228,6 +228,25 @@ impl ArrayIterator {
         })
     }
 
+    pub fn step_by(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        step: i64,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+        let iter = this
+            .iter
+            .take()
+            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.step_by(step as usize)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        )?);
+
+        Ok(this)
+    }
+
     pub fn chain(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,

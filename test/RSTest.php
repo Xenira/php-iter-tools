@@ -66,6 +66,15 @@ class RSTest extends TestCase
         $this->assertEquals(3, $this->iterator->nth(2));
     }
 
+    public function testStepBy(): void
+    {
+        $iterator = \ArrayIter::new([0, 1, 2, 3, 4, 5])->stepBy(2);
+        $this->assertEquals(0, $iterator->next());
+        $this->assertEquals(2, $iterator->next());
+        $this->assertEquals(4, $iterator->next());
+        $this->assertEquals(null, $iterator->next());
+    }
+
     public function testChain(): void
     {
         $iterator = $this->iterator->chain(\ArrayIter::new([6, 7, 8, 9, 10]));

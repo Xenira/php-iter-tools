@@ -20,6 +20,31 @@ class RSTest extends TestCase
         $this->assertInstanceOf(\ArrayIter::class, $this->iterator);
     }
 
+    public function testNext(): void
+    {
+        $iter = \ArrayIter::new([1, 2, 3]);
+        $this->assertEquals(1, $iter->next());
+        $this->assertEquals(2, $iter->next());
+        $this->assertEquals(3, $iter->next());
+        $this->assertEquals(null, $iter->next());
+        $this->assertEquals(null, $iter->next());
+    }
+
+    public function testSizeHint(): void
+    {
+        $iter = \ArrayIter::new([1, 2, 3]);
+        $this->assertEquals([3, 3], $iter->sizeHint());
+        $iter->next();
+        $this->assertEquals([2, 2], $iter->sizeHint());
+
+        $iter = \ArrayIter::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        $this->assertEquals([10, 10], $iter->sizeHint());
+        $iter = $iter->filter(fn($x) => $x % 2 === 0);
+        $this->assertEquals([0, 10], $iter->sizeHint());
+        $iter = $iter->chain(\ArrayIter::new([15, 16, 17, 18, 19]));
+        $this->assertEquals([5, 15], $iter->sizeHint());
+    }
+
     public function testCollect(): void
     {
         $this->assertEquals([1, 2, 3, 4, 5], $this->iterator->collect());
@@ -141,8 +166,6 @@ class RSTest extends TestCase
 
     public function testInspect(): void
     {
-        $this->markTestSkipped('Segfaults :(');
-        return;
         $result = 0;
         $iterator = \ArrayIter::new([1, 2, 3, 4, 5]);
 

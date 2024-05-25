@@ -3,6 +3,9 @@ name = "php_iter_tools"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.78.0"
+license = "MPL-2.0"
+description = "PHP extension for sane iterators"
+repository = "https://github.com/xenira/php-iter-tools"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

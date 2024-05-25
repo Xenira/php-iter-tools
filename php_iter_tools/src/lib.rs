@@ -420,6 +420,8 @@ impl ArrayIterator {
         Ok(this)
     }
 
+    // TODO: peekable
+
     pub fn skip_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
@@ -518,6 +520,7 @@ impl ArrayIterator {
         Ok(this)
     }
 
+    // TODO: scan
     // fn scan(
     //     #[this] this: &mut ZendClassObject<ArrayIterator>,
     //     initial: ZVal,
@@ -629,20 +632,19 @@ impl ArrayIterator {
         })
     }
 
-    // TODO: try_collect
-
-    pub fn collect_into(&mut self, collection: &mut Zval) -> Result<()> {
-        let arr: &mut ZendHashTable = collection.array_mut().unwrap();
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
-                iter,
-                for x in iter {
-                    arr.push(x.inner);
-                },
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
-        })
-    }
+    // TODO: wait for stable
+    // pub fn collect_into(&mut self, collection: &mut Zval) -> Result<()> {
+    //     let arr: &mut ZendHashTable = collection.array_mut().unwrap();
+    //     self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    //         match_iter_type!(
+    //             iter,
+    //             for x in iter {
+    //                 arr.push(x.inner);
+    //             },
+    //             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+    //         )
+    //     })
+    // }
 
     pub fn partition(&mut self, callback: ZCallable) -> Result<ZBox<ZendHashTable>> {
         let mut callback = callback;
@@ -675,6 +677,8 @@ impl ArrayIterator {
     }
 
     // TODO: try_fold
+    // TODO: try_for_each
+
     pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval> {
         let mut acc = initial.shallow_clone();
         let mut callback = callback;
@@ -712,8 +716,6 @@ impl ArrayIterator {
             )
         })
     }
-
-    // TODO: try_reduce
 
     pub fn all(&mut self, callback: ZCallable) -> Result<bool> {
         let mut callback = callback;
@@ -785,7 +787,17 @@ impl ArrayIterator {
         })
     }
 
-    // TODO: rposition
+    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<i64>> {
+        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+            let mut callback = callback;
+            match_iter_type!(
+                iter,
+                iter.rposition(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() })
+                    .map(|x| x as i64),
+                IterBox::DoubleEndedExactSize
+            )
+        })
+    }
 
     pub fn max(&mut self) -> Result<Option<Zval>> {
         self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {

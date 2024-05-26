@@ -1,12 +1,12 @@
 use std::ptr;
 
-use anyhow::Result;
+use exceptions::IterError;
 use ext_php_rs::{
     boxed::ZBox,
     convert::{FromZval, IntoZval},
     ffi::{
-        self, _call_user_function_impl, zend_call_function, zend_fcall_info_init,
-        zend_hash_get_current_data_ex, zval, HashPosition,
+        self, zend_call_function, zend_fcall_info_init, zend_hash_get_current_data_ex, zval,
+        HashPosition,
     },
     flags::DataType,
     prelude::*,
@@ -16,19 +16,8 @@ use macros::{match_iter_result_type, match_iter_same_type, match_nested_iter_typ
 
 use crate::macros::match_iter_type;
 
+mod exceptions;
 mod macros;
-
-// mod result;
-
-// impl<'a> Into<Box<(dyn Iterator<Item = ZVal> + 'a)>> for IterBuilder {
-//     fn into(self) -> Box<(dyn Iterator<Item = ZVal> + 'a)> {
-//         let inner = self.inner.inner;
-//         let iter = inner.array().unwrap().values().map(|x| ZVal::from(x));
-//         let iter = Box::new(iter);
-//
-//         iter
-//     }
-// }
 
 pub struct SimpleZValIter {
     inner: Zval,
@@ -137,13 +126,6 @@ impl ArrayIterator {
     ///
     /// @param list<T> $vec
     pub fn new(vec: &Zval) -> Self {
-        // let inner = vec
-        //     .array()
-        //     .unwrap()
-        //     .values()
-        //     .map(|v| v.shallow_clone())
-        //     .collect::<Vec<_>>();
-
         Self {
             iter: Some(IterBox::DoubleEndedExactSize(Box::new(
                 ZVal::from(vec).into_iter(),
@@ -156,13 +138,16 @@ impl ArrayIterator {
     /// Returns `null` when iteration is finished. Individual iterator implementations may choose to resume iteration, and so calling next() again may or may not eventually start returning values again at some point.
     ///
     /// @return T|null
-    pub fn next(&mut self) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    pub fn next(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.next().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -182,25 +167,33 @@ impl ArrayIterator {
     /// The default implementation returns (0, None) which is correct for any iterator.
     ///
     /// @return array{int, int|null}
-    pub fn size_hint(&mut self) -> Result<ZBox<ZendHashTable>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    /// @throws \LogicException
+    /// @throws \Exception
+    pub fn size_hint(&mut self) -> Result<ZBox<ZendHashTable>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             let size_hint = match_iter_type!(
                 iter,
                 iter.size_hint(),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
             );
 
-            size_hint.map(|(x, y)| {
-                let mut map = ZendHashTable::new();
-                map.push(x);
-                map.push(y.map(|x| {
-                    let mut val = Zval::new();
-                    val.set_long(x as i64);
-                    val
-                }).unwrap_or(Zval::new()));
+            let (lower, upper) = size_hint;
+            let mut map = ZendHashTable::new();
+            map.push(lower);
+            map.push(
+                upper
+                    .map(|upper| {
+                        let mut val = Zval::new();
+                        val.set_long(upper as i64);
+                        val
+                    })
+                    .unwrap_or(Zval::new()),
+            );
 
-                map
-            })
+            Ok(map)
         })
     }
 
@@ -213,13 +206,16 @@ impl ArrayIterator {
     ///
     /// # Panics
     /// This function might panic if the iterator has more than `usize::MAX` elements.
-    pub fn count(&mut self) -> Result<i64> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    pub fn count(&mut self) -> Result<i64, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.count() as i64,
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -228,13 +224,16 @@ impl ArrayIterator {
     /// This method will evaluate the iterator until it returns `null`. While doing so, it keeps track of the current element. After `null` is returned, `last()` will then return the last element it saw.
     ///
     /// @return T|null
-    pub fn last(&mut self) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    pub fn last(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.last().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -247,13 +246,16 @@ impl ArrayIterator {
     /// `nth()` will return `null` if `n` is greater than or equal to the length of the iterator.
     ///
     /// @return T|null
-    pub fn nth(&mut self, n: i64) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    pub fn nth(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.nth(n as usize).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -266,22 +268,28 @@ impl ArrayIterator {
     /// # Panics
     /// The method will panic if the given step is 0.
     ///
+    /// @param positive-int $step
     /// @return self<T>
+    /// @throws \LogicException
+    /// @throws \ValueError
     pub fn step_by(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         step: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this
-            .iter
-            .take()
-            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        if step == 0 {
+            return Err(IterError::ArgumentError(format!(
+                "Step must be greater than 0, {step} given"
+            )));
+        }
+
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.step_by(step as usize)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -294,17 +302,15 @@ impl ArrayIterator {
     ///
     /// @param self<T> $other
     /// @return self<T>
+    /// @throws \LogicException
     pub fn chain(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this
-            .iter
-            .take()
-            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut other_iterator = other.clone();
         let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
-            other_iterator.inner.object_mut().unwrap(),
+            other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
         )
         .unwrap();
 
@@ -318,7 +324,7 @@ impl ArrayIterator {
                 IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator;
             IterBox::ExactSize | IterBox::Iterator :
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -335,18 +341,15 @@ impl ArrayIterator {
     ///
     /// @param self<U> $other
     /// @return self<array{T, U}>
+    /// @throws \LogicException
     pub fn zip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this
-            .iter
-            .take()
-            .ok_or(anyhow::anyhow!("Iterator is not valid"))
-            .unwrap();
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut other_iterator = other.clone();
         let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
-            other_iterator.inner.object_mut().unwrap(),
+            other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
         )
         .unwrap();
 
@@ -371,7 +374,7 @@ impl ArrayIterator {
                 IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
             IterBox::DoubleEnded | IterBox::Iterator:
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -386,16 +389,14 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U $callback
     /// @return self<U>
+    /// @throws \LogicException
     #[allow(unreachable_patterns)]
     pub fn map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
         // this.chain.push(Iter::Map { callback });
-        let iter = this
-            .iter
-            .take()
-            .ok_or(anyhow::anyhow!("Iterator is not valid"))?;
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
 
         this.iter = Some(match_iter_same_type!(
@@ -405,7 +406,7 @@ impl ArrayIterator {
                 | IterBox::DoubleEnded
                 | IterBox::ExactSize
                 | IterBox::Iterator
-        )?);
+        ));
         Ok(this)
     }
 
@@ -414,17 +415,21 @@ impl ArrayIterator {
     /// This is equivalent to using a `for` loop on the iterator, although break and continue are not possible from a closure. It’s generally more idiomatic to use a `for` loop, but `for_each` may be more legible when processing items at the end of longer iterator chains. In some cases `for_each` may also be faster than a loop, because it will use internal iteration on adapters like `Chain`.
     ///
     /// @param callable(T): void $callback
-    pub fn for_each(&mut self, callback: ZCallable) -> Result<()> {
+    /// @throws \LogicException
+    pub fn for_each(&mut self, callback: ZCallable) -> Result<(), IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.for_each(|x| {
                     call_cached(&mut callback, [x.inner]);
                 }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
-        })?;
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        });
 
         Ok(())
     }
@@ -435,13 +440,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return self<T>
+    /// @throws \LogicException
     pub fn filter(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -452,7 +456,7 @@ impl ArrayIterator {
             })),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
             IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -466,13 +470,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U|null $callback
     /// @return self<U>
+    /// @throws \LogicException
     pub fn filter_map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -482,7 +485,7 @@ impl ArrayIterator {
             ),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
             IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -500,12 +503,11 @@ impl ArrayIterator {
     /// The returned iterator might panic if the to-be-returned index would overflow a `usize`.
     ///
     /// @return self<array{int, T}>
+    /// @throws \LogicException
     pub fn enumerate(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.enumerate().map(|(i, x)| {
@@ -517,7 +519,7 @@ impl ArrayIterator {
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -532,13 +534,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return self<T>
+    /// @throws \LogicException
     pub fn skip_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -548,7 +549,7 @@ impl ArrayIterator {
                     .unwrap()
             })),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -561,13 +562,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return self<T>
+    /// @throws \LogicException
     pub fn take_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -577,7 +577,7 @@ impl ArrayIterator {
                     .unwrap()
             })),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -588,13 +588,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U|null $callback
     /// @return self<U>
+    /// @throws \LogicException
     pub fn map_while(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -603,7 +602,7 @@ impl ArrayIterator {
                     .take_while(|x| !x.inner.is_null())
             ),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -613,20 +612,19 @@ impl ArrayIterator {
     /// `skip(n)` skips elements until `n` elements are skipped or the end of the iterator is reached (whichever happens first). After that, all the remaining elements are yielded. In particular, if the original iterator is too short, then the returned iterator is empty.
     ///
     /// @return self<T>
+    /// @throws \LogicException
     pub fn skip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.skip(n as usize)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -636,20 +634,19 @@ impl ArrayIterator {
     /// `take(n)` yields elements until `n` elements are yielded or the end of the iterator is reached (whichever happens first). The returned iterator is a prefix of length `n` if the original iterator contains at least `n` elements, otherwise it contains all of the (fewer than `n`) elements of the original iterator.
     ///
     /// @return self<T>
+    /// @throws \LogicException
     pub fn take(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.take(n as usize)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -681,13 +678,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): list<U> $callback
     /// @return self<U>
+    /// @throws \LogicException
     fn flat_map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_result_type!(
             iter,
@@ -701,7 +697,7 @@ impl ArrayIterator {
             })),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
             IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -712,12 +708,11 @@ impl ArrayIterator {
     ///
     /// @template U of array<V>
     /// @return self<V>
+    /// @throws \LogicException
     fn flatten(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.flat_map(|x| {
@@ -730,7 +725,7 @@ impl ArrayIterator {
             })),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
             IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -745,10 +740,11 @@ impl ArrayIterator {
     /// Note that the Fuse wrapper is a no-op on iterators that implement the FusedIterator trait. fuse() may therefore behave incorrectly if the FusedIterator trait is improperly implemented.
     ///
     /// @return self<T>
-    fn fuse(#[this] this: &mut ZendClassObject<Self>) -> Result<&mut ZendClassObject<Self>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    /// @throws \LogicException
+    fn fuse(
+        #[this] this: &mut ZendClassObject<Self>,
+    ) -> Result<&mut ZendClassObject<Self>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         // Not sure how useful this is atm. But keeping it for rust interface compatibility
         this.iter = Some(match_iter_same_type!(
             iter,
@@ -757,7 +753,7 @@ impl ArrayIterator {
                 | IterBox::DoubleEnded
                 | IterBox::ExactSize
                 | IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -770,13 +766,12 @@ impl ArrayIterator {
     ///
     /// @param callable(T): void $callback
     /// @return self<T>
+    /// @throws \LogicException
     fn inspect(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         let mut callback = callback;
         this.iter = Some(match_iter_same_type!(
             iter,
@@ -787,7 +782,7 @@ impl ArrayIterator {
                 | IterBox::DoubleEnded
                 | IterBox::ExactSize
                 | IterBox::Iterator
-        )?);
+        ));
 
         Ok(this)
     }
@@ -799,13 +794,17 @@ impl ArrayIterator {
     /// The most basic pattern in which `collect()` is used is to turn one collection into another. You take an iterator do a bunch of transformations, and then `collect()` at the end.
     ///
     /// @return list<T>
-    pub fn collect(&mut self) -> Result<Vec<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    /// @throws \LogicException
+    pub fn collect(&mut self) -> Result<Vec<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.map(|x| x.inner).collect::<Vec<_>>(),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -829,17 +828,26 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return array{list<T>, list<T>}
-    pub fn partition(&mut self, callback: ZCallable) -> Result<ZBox<ZendHashTable>> {
+    /// @throws \LogicException
+    pub fn partition(&mut self, callback: ZCallable) -> Result<ZBox<ZendHashTable>, IterError> {
         let mut callback = callback;
-        let (left, right): (Vec<ZVal>, Vec<ZVal>) =  self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
-                iter,
-                iter.partition(|x| {
-                    call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
-                }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
-        })?; // TODO: check if shallow_clone is necessary
+        let (left, right): (Vec<ZVal>, Vec<ZVal>) =
+            self.iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |iter| {
+                    Ok(match_iter_type!(
+                        iter,
+                        iter.partition(|x| {
+                            call_cached(&mut callback, [x.inner.shallow_clone()])
+                                .bool()
+                                .unwrap()
+                        }),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })?; // TODO: check if shallow_clone is necessary
 
         let mut result = ZendHashTable::new();
 
@@ -883,18 +891,24 @@ impl ArrayIterator {
     /// @param U $initial
     /// @param callable(U, T): U $callback
     /// @return U
-    pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval> {
+    /// @throws \LogicException
+    pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval, IterError> {
         let mut acc = initial.shallow_clone();
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
-                iter,
-                for x in iter {
-                    acc = call_cached(&mut callback, [acc.shallow_clone(), x.inner]);
-                },
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
-        })?; // TODO: Check if correct with shallow_clone
+        self.iter
+            .as_mut()
+            .map_or(Err(IterError::Consumed), |iter| {
+                Ok(match_iter_type!(
+                    iter,
+                    for x in iter {
+                        acc = call_cached(&mut callback, [acc.shallow_clone(), x.inner]);
+                    },
+                    IterBox::DoubleEndedExactSize
+                        | IterBox::DoubleEnded
+                        | IterBox::ExactSize
+                        | IterBox::Iterator
+                ))
+            })?; // TODO: Check if correct with shallow_clone
 
         Ok(acc)
     }
@@ -907,10 +921,11 @@ impl ArrayIterator {
     ///
     /// @param callable(T, T): T $callback
     /// @return T|null
-    pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.fold(None, |acc, x| {
                     if let Some(acc) = acc {
@@ -919,8 +934,11 @@ impl ArrayIterator {
                         Some(x.inner)
                     }
                 }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -933,16 +951,18 @@ impl ArrayIterator {
     /// An empty iterator returns `true`.
     ///
     /// @param callable(T): bool $callback
-    pub fn all(&mut self, callback: ZCallable) -> Result<bool> {
+    /// @throws \LogicException
+    pub fn all(&mut self, callback: ZCallable) -> Result<bool, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
-                iter.all(|x| {
-                    call_cached(&mut callback, [x.inner]).bool().unwrap()
-                }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                iter.all(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() }),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -955,16 +975,18 @@ impl ArrayIterator {
     /// An empty iterator returns `false`.
     ///
     /// @param callable(T): bool $callback
-    pub fn any(&mut self, callback: ZCallable) -> Result<bool> {
+    /// @throws \LogicException
+    pub fn any(&mut self, callback: ZCallable) -> Result<bool, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
-                iter.any(|x| {
-                    call_cached(&mut callback, [x.inner]).bool().unwrap()
-                }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                iter.any(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() }),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -978,16 +1000,23 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return T|null
-    pub fn find(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn find(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.find(|x| {
-                    call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
-                }).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                    call_cached(&mut callback, [x.inner.shallow_clone()])
+                        .bool()
+                        .unwrap()
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -997,10 +1026,11 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U|null $callback
     /// @return U|null
-    pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.find_map(|x| {
                     let res = call_cached(&mut callback, [x.inner]);
@@ -1010,8 +1040,11 @@ impl ArrayIterator {
                         Some(res)
                     }
                 }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1029,16 +1062,19 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return int|null
-    pub fn position(&mut self, callback: ZCallable) -> Result<Option<i64>> {
+    /// @throws \LogicException
+    pub fn position(&mut self, callback: ZCallable) -> Result<Option<i64>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
-                iter.position(|x| {
-                    call_cached(&mut callback, [x.inner]).bool().unwrap()
-                }).map(|x| x as i64),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                iter.position(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() })
+                    .map(|x| x as i64),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1050,14 +1086,17 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return int|null
-    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<i64>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    /// @throws \LogicException
+    /// @throws \DomainException
+    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<i64>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             let mut callback = callback;
             match_iter_type!(
                 iter,
                 iter.rposition(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() })
                     .map(|x| x as i64),
-                IterBox::DoubleEndedExactSize
+                IterBox::DoubleEndedExactSize,
+                _ => Err(IterError::Unsupported("rposition".to_string(), "DoubleEndedExactSize".to_string()))
             )
         })
     }
@@ -1067,13 +1106,17 @@ impl ArrayIterator {
     /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
     ///
     /// @return T|null
-    pub fn max(&mut self) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    /// @throws \LogicException
+    pub fn max(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.max().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1082,13 +1125,17 @@ impl ArrayIterator {
     /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
     ///
     /// @return T|null
-    pub fn min(&mut self) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+    /// @throws \LogicException
+    pub fn min(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.min().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1098,14 +1145,21 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U $callback
     /// @return T|null
-    pub fn max_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn max_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
-                iter.max_by_key(|x| ZVal { inner: call_cached(&mut callback, [x.inner.shallow_clone()]) } ).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                iter.max_by_key(|x| ZVal {
+                    inner: call_cached(&mut callback, [x.inner.shallow_clone()])
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1115,16 +1169,27 @@ impl ArrayIterator {
     ///
     /// @param callable(T, T): int $callback
     /// @return T|null
-    pub fn max_by(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn max_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.max_by(|x, y| {
-                    call_cached(&mut callback, [x.inner.shallow_clone(), y.inner.shallow_clone()]).long().unwrap().cmp(&0)
-                }).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                    call_cached(
+                        &mut callback,
+                        [x.inner.shallow_clone(), y.inner.shallow_clone()],
+                    )
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1134,14 +1199,21 @@ impl ArrayIterator {
     ///
     /// @param callable(T): U $callback
     /// @return T|null
-    pub fn min_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn min_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
-                iter.min_by_key(|x| ZVal { inner: call_cached(&mut callback, [x.inner.shallow_clone()]) } ).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                iter.min_by_key(|x| ZVal {
+                    inner: call_cached(&mut callback, [x.inner.shallow_clone()])
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1151,16 +1223,27 @@ impl ArrayIterator {
     ///
     /// @param callable(T, T): int $callback
     /// @return T|null
-    pub fn min_by(&mut self, callback: ZCallable) -> Result<Option<Zval>> {
+    /// @throws \LogicException
+    pub fn min_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            match_iter_type!(
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
                 iter,
                 iter.min_by(|x, y| {
-                    call_cached(&mut callback, [x.inner.shallow_clone(), y.inner.shallow_clone()]).long().unwrap().cmp(&0)
-                }).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-            )
+                    call_cached(
+                        &mut callback,
+                        [x.inner.shallow_clone(), y.inner.shallow_clone()],
+                    )
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
         })
     }
 
@@ -1171,16 +1254,17 @@ impl ArrayIterator {
     /// This is only possible if the iterator has an end, so `rev()` only works on DoubleEndedIterators.
     ///
     /// @return self<T>
+    /// @throws \LogicException
+    /// @throws \DomainException
     pub fn rev(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>> {
-        let iter = this.iter.take().ok_or(anyhow::anyhow!(
-            "Iterator is not valid. This is most likely because the iterator has already been consumed."
-        ))?;
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_same_type!(
             iter,
             Box::new(iter.rev()),
-            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+            _ => IterError::Unsupported("rev".to_string(), "DoubleEnded".to_string())
         )?);
 
         Ok(this)
@@ -1194,160 +1278,248 @@ impl ArrayIterator {
     /// Lexicographically compares the elements of this Iterator with those of another.
     ///
     /// @param self<T> $other
-    pub fn cmp(&mut self, other: &mut ArrayIterator) -> Result<i8> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.cmp(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
+    /// @throws \LogicException
+    pub fn cmp(&mut self, other: &mut ArrayIterator) -> Result<i8, IterError> {
+        self.iter
+            .as_mut()
+            .map_or(Err(IterError::Consumed), |iter| {
+                other
+                    .iter
+                    .as_mut()
+                    .map_or(Err(IterError::Consumed), |other| {
+                        Ok(match_iter_type!(
+                            iter,
+                            match_iter_type!(
+                                other,
+                                iter.cmp(other),
+                                IterBox::DoubleEndedExactSize
+                                    | IterBox::DoubleEnded
+                                    | IterBox::ExactSize
+                                    | IterBox::Iterator
+                            ),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ))
+                    })
             })
-        }).map(|x| match x {
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => 1,
-        })
+            .map(|x| match x {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            })
     }
 
     /// Lexicographically compares the PartialOrd elements of this Iterator with those of another. The comparison works like short-circuit evaluation, returning a result without comparing the remaining elements. As soon as an order can be determined, the evaluation stops and a result is returned.
     ///
     /// @param self<T> $other
     /// @return int|null
-    pub fn partial_cmp(&mut self, other: &mut ArrayIterator) -> Result<Option<i8>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.partial_cmp(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
+    /// @throws \LogicException
+    pub fn partial_cmp(&mut self, other: &mut ArrayIterator) -> Result<Option<i8>, IterError> {
+        self.iter
+            .as_mut()
+            .map_or(Err(IterError::Consumed), |iter| {
+                other
+                    .iter
+                    .as_mut()
+                    .map_or(Err(IterError::Consumed), |other| {
+                        Ok(match_iter_type!(
+                            iter,
+                            match_iter_type!(
+                                other,
+                                iter.partial_cmp(other),
+                                IterBox::DoubleEndedExactSize
+                                    | IterBox::DoubleEnded
+                                    | IterBox::ExactSize
+                                    | IterBox::Iterator
+                            ),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ))
+                    })
             })
-        }).map(|x| match x {
-            Some(std::cmp::Ordering::Less) => Some(-1),
-            Some(std::cmp::Ordering::Equal) => Some(0),
-            Some(std::cmp::Ordering::Greater) => Some(1),
-            None => None,
-        })
+            .map(|x| match x {
+                Some(std::cmp::Ordering::Less) => Some(-1),
+                Some(std::cmp::Ordering::Equal) => Some(0),
+                Some(std::cmp::Ordering::Greater) => Some(1),
+                None => None,
+            })
     }
 
     /// Determines if the elements of this Iterator are equal to those of another.
     ///
     /// @param self<T> $other
-    pub fn eq(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.eq(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    /// @throws \LogicException
+    pub fn eq(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.eq(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
     /// Determines if the elements of this Iterator are not equal to those of another.
     ///
     /// @param self<T> $other
-    pub fn ne(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.ne(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    /// @throws \LogicException
+    pub fn ne(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.ne(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
     /// Determines if the elements of this Iterator are lexicographically less than those of another.
     ///
     /// @param self<T> $other
-    pub fn lt(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.lt(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    /// @throws \LogicException
+    pub fn lt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.lt(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
     /// Determines if the elements of this Iterator are lexicographically less or equal to those of another.
     ///
     /// @param self<T> $other
-    pub fn le(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.le(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    /// @Throws \LogicException
+    pub fn le(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.le(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
     /// Determines if the elements of this Iterator are lexicographically greater than those of another.
     ///
     /// @param self<T> $other
-    pub fn gt(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.gt(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    /// @throws \LogicException
+    pub fn gt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.gt(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
     /// Determines if the elements of this Iterator are lexicographically greater than or equal to those of another.
-    pub fn ge(&mut self, other: &mut ArrayIterator) -> Result<bool> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-            other.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |other| {
-                match_iter_type!(
-                    iter,
-                    match_iter_type!(
-                        other,
-                        iter.ge(other),
-                        IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                    ),
-                    IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-                )?
-            })
+    ///
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn ge(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    Ok(match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            iter.ge(other),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    ))
+                })
         })
     }
 
@@ -1357,12 +1529,15 @@ impl ArrayIterator {
     /// Returns `null` when there are no more elements.
     ///
     /// @return T|null
-    pub fn next_back(&mut self) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    /// @throws \LogicException
+    /// @throws \DomainException
+    pub fn next_back(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
                 iter.next_back().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("next_back".to_string(), "DoubleEnded".to_string()))
             )
         })
     }
@@ -1376,12 +1551,15 @@ impl ArrayIterator {
     /// `nth_back()` will return `null` if `n` is greater than or equal to the length of the iterator.
     ///
     /// @return T|null
-    pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    /// @throws \LogicException
+    /// @throws \DomainException
+    pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
                 iter.nth_back(n as usize).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("nth_back".to_string(), "DoubleEnded".to_string()))
             )
         })
     }
@@ -1407,20 +1585,23 @@ impl ArrayIterator {
     /// @param U $initial
     /// @param callable(U, T): U $callback
     /// @return U
+    /// @throws \LogicException
+    /// @throws \DomainException
     fn rfold(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         initial: &Zval,
         callback: ZCallable,
-    ) -> Result<Zval> {
-        this.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-        let mut callback = callback;
-        let initial = initial.shallow_clone();
+    ) -> Result<Zval, IterError> {
+        this.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            let mut callback = callback;
+            let initial = initial.shallow_clone();
             match_iter_type!(
                 iter,
                 iter.rfold(initial, |acc, x| {
                     call_cached(&mut callback, [acc.shallow_clone(), x.inner])
                 }),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("rfold".to_string(), "DoubleEnded".to_string()))
             )
         })
     }
@@ -1433,18 +1614,21 @@ impl ArrayIterator {
     ///
     /// @param callable(T): bool $callback
     /// @return T|null
+    /// @throws \LogicException
+    /// @throws \DomainException
     fn rfind(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
-    ) -> Result<Option<Zval>> {
-        this.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    ) -> Result<Option<Zval>, IterError> {
+        this.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             let mut callback = callback;
             match_iter_type!(
                 iter,
                 iter.rfind(|x| {
                     call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
                 }).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("rfind".to_string(), "DoubleEnded".to_string()))
             )
         })
     }
@@ -1455,12 +1639,15 @@ impl ArrayIterator {
     /// The implementation ensures that the iterator will return exactly `len()` more times a `T` value, before returning `null`. This method has a default implementation, so you usually should not implement it directly. However, if you can provide a more efficient implementation, you can do so. See the trait-level docs for an example.
     ///
     /// This function has the same safety guarantees as the `size_hint()` function.
-    fn len(&mut self) -> Result<i64> {
-        self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    /// @throws \LogicException
+    /// @throws \DomainException
+    fn len(&mut self) -> Result<i64, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
                 iter.len() as i64,
-                IterBox::DoubleEndedExactSize | IterBox::ExactSize
+                IterBox::DoubleEndedExactSize | IterBox::ExactSize,
+                _ => Err(IterError::Unsupported("len".to_string(), "ExactSize".to_string()))
             )
         })
     }

@@ -5,17 +5,33 @@
 :icons: font
 :source-highlighter: highlightjs
 
-Simple PHP library for making working with iterators more fun.
+////
 
-Heavily inspired by rust's iterators.
+Hello crates.io user o/
+
+If you can read this, crates.io is still not supporting asciidoc, so the documentation is not rendered correctly.
+Please view the readme on the github page: https://github.com/xenira/php-iter-tools
+
+////
+
+NOTE: The original php implementation is discontinued, as the performance is not good enough. This project is now a php extension, implementing the rust iterator interface.
+
+Blazingly fast :fire: PHP iterators, inspired by :crab: iterators.
 
 Currently not all methods are implemented, but the most important ones are. Use with caution.
+
+== Installation
+
+```bash
+cargo build --release
+cp target/release/libext_itertools.so /path/to/php/ext
+echo "extension=libext_itertools.so" >> /path/to/php/php.ini
+```
 
 == Usage
 
 ```php
-$iterator = new ArrayIterator([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-$iterator = $iterator
+$iterator = \Iter::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     ->filter(fn ($value) => $value % 2 === 0)
     ->map(fn ($value) => $value * 2)
     ->take(4);

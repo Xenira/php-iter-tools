@@ -2,7 +2,7 @@
 name = "php_iter_tools"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.78.0"
+rust-version = "1.64.0"
 license = "MPL-2.0"
 description = "PHP extension for sane iterators"
 repository = "https://github.com/xenira/php-iter-tools"
@@ -11,11 +11,12 @@ repository = "https://github.com/xenira/php-iter-tools"
 
 [lib]
 crate-type = ["cdylib"]
+name = "ext_itertools"
 
 [dependencies]
 anyhow = "1.0.82"
 dyn-clone = "1.0.17"
-ext-php-rs = { path = "../../ext-php-rs/", features = ["anyhow"] }
+ext-php-rs = { path = "../ext-php-rs/", features = ["anyhow"] }
 thiserror = "1.0.61"
 
 [profile.release]

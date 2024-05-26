@@ -97,7 +97,7 @@ impl Clone for SimpleZValIter {
 /// Blazingly 🔥 fast iterator for PHP arrays.
 ///
 /// @template T
-#[php_class(name = "ArrayIter")]
+#[php_class(name = "Iter")]
 pub struct ArrayIterator {
     iter: Option<IterBox<'static>>,
 }
@@ -303,6 +303,7 @@ impl ArrayIterator {
     /// @param self<T> $other
     /// @return self<T>
     /// @throws \LogicException
+    /// @throws \ValueError
     pub fn chain(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
@@ -312,7 +313,7 @@ impl ArrayIterator {
         let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
             other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
         )
-        .unwrap();
+        .ok_or(IterError::ArgumentError("other".to_string()))?;
 
         this.iter = Some(match_nested_iter_type!(
             iter,
@@ -342,6 +343,7 @@ impl ArrayIterator {
     /// @param self<U> $other
     /// @return self<array{T, U}>
     /// @throws \LogicException
+    /// @throws \ValueError
     pub fn zip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         other: ZIterRS,
@@ -351,7 +353,7 @@ impl ArrayIterator {
         let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
             other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
         )
-        .unwrap();
+        .ok_or(IterError::ArgumentError("other".to_string()))?;
 
         this.iter = Some(match_nested_iter_type!(
             iter,
@@ -1760,7 +1762,7 @@ impl Clone for ZIterRS {
 }
 
 impl<'a> FromZval<'a> for ZIterRS {
-    const TYPE: DataType = DataType::Object(Some("ArrayIter"));
+    const TYPE: DataType = DataType::Object(Some("Iter"));
 
     fn from_zval(zval: &'a Zval) -> Option<Self> {
         Some(ZIterRS {

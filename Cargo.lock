@@ -485,6 +485,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.13.0"
+source = "git+https://github.com/rust-itertools/itertools#ad5cc9645a5c3de2811eed1b2c6643f27f06764a"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -713,6 +721,7 @@ dependencies = [
  "anyhow",
  "dyn-clone",
  "ext-php-rs",
+ "itertools",
  "thiserror",
 ]
 

@@ -20,7 +20,15 @@ macro_rules! match_iter_type {
             )*)*
         }
     };
-
+    (mut $iter:ident, $($code:expr, $($iter_type: path)|*),*) => {
+        match $iter {
+            $($(
+                $iter_type(mut $iter) => {
+                    $code
+                }
+            )*)*
+        }
+    };
 }
 
 macro_rules! match_iter_same_type {

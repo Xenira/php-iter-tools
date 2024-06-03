@@ -17,6 +17,7 @@ name = "ext_itertools"
 anyhow = "1.0.82"
 dyn-clone = "1.0.17"
 ext-php-rs = { path = "../ext-php-rs/", features = ["anyhow"] }
+itertools = { git = "https://github.com/rust-itertools/itertools" }
 thiserror = "1.0.61"
 
 [profile.release]

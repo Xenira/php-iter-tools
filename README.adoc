@@ -20,6 +20,8 @@ Blazingly fast :fire: PHP iterators, inspired by :crab: iterators.
 
 Currently not all methods are implemented, but the most important ones are. Use with caution.
 
+Performance for operations, that have a c equivalent in php, it is around 1.6x slower, but compared to pure php, it is around 1.4-4x faster. In addition to that iterators are lazy, which is not possible with the c functions in php. For example, if you only need the first match in an iterator chain this can be a lot faster and consume less memory.
+
 == Installation
 
 ```bash
@@ -38,3 +40,28 @@ $iterator = \Iter::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
 assert($iterator->collect() === [4, 8, 12, 16]);
 ```
+
+== Benchmarks
+
+.Map 10_000 elements (`val * 2`)
+
+```bash
++-----------+--------------------+------------------------+-----+------+-----+----------+-----------+-----------+-----------+-----------+---------+--------+
+| tag       | benchmark          | subject                | set | revs | its | mem_peak | best      | mode      | mean      | worst     | stdev   | rstdev |
++-----------+--------------------+------------------------+-----+------+-----+----------+-----------+-----------+-----------+-----------+---------+--------+
+| <current> | ArrayIteratorBench | benchRustArrayIterator |     | 500  | 5   | 1.754mb  | 292.984μs | 296.834μs | 298.964μs | 305.596μs | 4.655μs | ±1.56% |
+| <current> | ArrayIteratorBench | benchVanilla           |     | 500  | 5   | 1.753mb  | 171.644μs | 175.277μs | 177.002μs | 183.700μs | 4.246μs | ±2.40% |
+| <current> | ArrayIteratorBench | benchGenerator         |     | 500  | 5   | 1.754mb  | 399.784μs | 404.235μs | 409.379μs | 419.736μs | 7.878μs | ±1.92% |
++-----------+--------------------+------------------------+-----+------+-----+----------+-----------+-----------+-----------+-----------+---------+--------+
+```
+
+== Panics
+
+Iterators might panic. While this is not ideal, throwing exceptions when collecting the iterator has a performance overhead.
+As panics should only happen in extreme circumstances (like out of memory), this is expected behavior.
+Possible panics should be documented in the method documentation.
+
+That being said, it is recommended to use `declare(strict_types=1);` in your php code to convert easy to catch panics into exceptions.
+
+== License
+This project is licensed under the Mozilla Public License Version 2.0 - see the LICENSE file for details.

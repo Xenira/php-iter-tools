@@ -1,3 +1,9 @@
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::cmp_null)]
+
 use std::ptr;
 
 use exceptions::IterError;
@@ -5,8 +11,7 @@ use ext_php_rs::{
     boxed::ZBox,
     convert::{FromZval, IntoZval},
     ffi::{
-        self, zend_call_function, zend_fcall_info_init, zend_hash_get_current_data_ex, zval,
-        HashPosition,
+        self, zend_call_function, zend_fcall_info_init, zend_hash_get_current_data_ex, HashPosition,
     },
     flags::DataType,
     prelude::*,
@@ -111,12 +116,12 @@ impl IntoIterator for ZVal {
         let pos_front = 0;
         let size = array.nNumOfElements;
         let pos_back = size;
-        return SimpleZValIter {
+        SimpleZValIter {
             inner: self.inner,
             size,
             pos_front,
             pos_back,
-        };
+        }
     }
 }
 
@@ -138,7 +143,8 @@ impl ArrayIterator {
     /// Returns `null` when iteration is finished. Individual iterator implementations may choose to resume iteration, and so calling next() again may or may not eventually start returning values again at some point.
     ///
     /// @return T|null
-    pub fn next(&mut self) -> Result<Option<Zval>, IterError> {
+    #[rename("next")]
+    pub fn php_next(&mut self) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             Ok(match_iter_type!(
                 iter,
@@ -182,16 +188,12 @@ impl ArrayIterator {
 
             let (lower, upper) = size_hint;
             let mut map = ZendHashTable::new();
-            map.push(lower);
-            map.push(
-                upper
-                    .map(|upper| {
-                        let mut val = Zval::new();
-                        val.set_long(upper as i64);
-                        val
-                    })
-                    .unwrap_or(Zval::new()),
-            );
+            map.push(lower)?;
+            map.push(upper.map_or(Ok(Zval::new()), |upper| {
+                let mut val = Zval::new();
+                val.set_long(i64::try_from(upper)?);
+                Ok::<Zval, IterError>(val)
+            })?)?;
 
             Ok(map)
         })
@@ -206,16 +208,16 @@ impl ArrayIterator {
     ///
     /// # Panics
     /// This function might panic if the iterator has more than `usize::MAX` elements.
-    pub fn count(&mut self) -> Result<i64, IterError> {
+    pub fn count(&mut self) -> Result<usize, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.count() as i64,
+                Ok(iter.count()),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -226,14 +228,14 @@ impl ArrayIterator {
     /// @return T|null
     pub fn last(&mut self) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.last().map(|x| x.inner),
+                Ok(iter.last().map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -246,16 +248,18 @@ impl ArrayIterator {
     /// `nth()` will return `null` if `n` is greater than or equal to the length of the iterator.
     ///
     /// @return T|null
+    /// @throws \LogicException
+    /// @throws \ArithmeticError
     pub fn nth(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.nth(n as usize).map(|x| x.inner),
+                Ok(iter.nth(usize::try_from(n)?).map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -272,6 +276,7 @@ impl ArrayIterator {
     /// @return self<T>
     /// @throws \LogicException
     /// @throws \ValueError
+    /// @throws \ArithmeticError
     pub fn step_by(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         step: i64,
@@ -285,7 +290,7 @@ impl ArrayIterator {
         let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
-            Box::new(iter.step_by(step as usize)),
+            Box::new(iter.step_by(usize::try_from(step)?)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
@@ -318,7 +323,7 @@ impl ArrayIterator {
         this.iter = Some(match_nested_iter_type!(
             iter,
             other_iterator,
-            other_iterator.iter.take().ok_or(anyhow::anyhow!("Iterator is not valid"))?,
+            other_iterator.iter.take().ok_or(IterError::Moved)?,
             Box::new(iter.chain(other_iterator)),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded :
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
@@ -339,6 +344,10 @@ impl ArrayIterator {
     /// If either iterator returns `null`, `next()` from the zipped iterator will return `null`. If the zipped iterator has no more elements to return then each further attempt to advance it will first try to advance the first iterator at most one time and if it still yielded an item try to advance the second iterator at most one time.
     ///
     /// To ‘undo’ the result of zipping up two iterators, see `unzip`.
+    ///
+    /// # Panics
+    /// - The iterator panics if adding the values to the new array fails.
+    /// - The iterator panics if allocating the new array fails.
     ///
     /// @param self<U> $other
     /// @return self<array{T, U}>
@@ -362,8 +371,8 @@ impl ArrayIterator {
             Box::new(iter.zip(other_iterator).map(
                 |(x, y)| {
                     let mut arr = ZendHashTable::new();
-                    arr.push(x.inner);
-                    arr.push(y.inner);
+                    arr.push(x.inner).unwrap();
+                    arr.push(y.inner).unwrap();
                     arr.into_zval(false).unwrap().into()
                 },
             )),
@@ -392,7 +401,6 @@ impl ArrayIterator {
     /// @param callable(T): U $callback
     /// @return self<U>
     /// @throws \LogicException
-    #[allow(unreachable_patterns)]
     pub fn map(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         callback: ZCallable,
@@ -403,7 +411,7 @@ impl ArrayIterator {
 
         this.iter = Some(match_iter_same_type!(
             iter,
-            Box::new(iter.map(move |x| { call_cached(&mut callback, [x.inner]).into() })),
+            Box::new(iter.map(move |x| call_cached(&mut callback, &[x.inner]).into())),
             IterBox::DoubleEndedExactSize
                 | IterBox::DoubleEnded
                 | IterBox::ExactSize
@@ -420,18 +428,17 @@ impl ArrayIterator {
     /// @throws \LogicException
     pub fn for_each(&mut self, callback: ZCallable) -> Result<(), IterError> {
         let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.for_each(|x| {
-                    call_cached(&mut callback, [x.inner]);
-                }),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        });
+        let iter = self.iter.as_mut().ok_or(IterError::Consumed)?;
+        match_iter_type!(
+            iter,
+            iter.for_each(|x| {
+                call_cached(&mut callback, &[x.inner]);
+            }),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        );
 
         Ok(())
     }
@@ -439,6 +446,9 @@ impl ArrayIterator {
     /// Creates an iterator which uses a closure to determine if an element should be yielded.
     ///
     /// Given an element the closure must return `true` or `false`. The returned iterator will yield only the elements for which the closure returns `true`.
+    ///
+    /// # Panics
+    /// - If the closure does not return a boolean
     ///
     /// @param callable(T): bool $callback
     /// @return self<T>
@@ -452,7 +462,7 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.filter(move |x| {
-                call_cached(&mut callback, [x.inner.shallow_clone()])
+                call_cached(&mut callback, &[x.inner.shallow_clone()])
                     .bool()
                     .unwrap()
             })),
@@ -482,7 +492,7 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(
-                iter.map(move |x| ZVal::from(call_cached(&mut callback, [x.inner.shallow_clone()])))
+                iter.map(move |x| ZVal::from(call_cached(&mut callback, &[x.inner])))
                     .filter(|x| !x.inner.is_null())
             ),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded => IterBox::DoubleEnded,
@@ -502,7 +512,9 @@ impl ArrayIterator {
     /// The method does no guarding against overflows, so enumerating more than `usize::MAX` elements either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
     ///
     /// # Panics
-    /// The returned iterator might panic if the to-be-returned index would overflow a `usize`.
+    /// - The returned iterator might panic if the to-be-returned index would overflow a `usize`.
+    /// - The returned iterator might panic if adding the values to the new array fails.
+    /// - The returned iterator might panic if allocating the new array fails.
     ///
     /// @return self<array{int, T}>
     /// @throws \LogicException
@@ -514,8 +526,8 @@ impl ArrayIterator {
             iter,
             Box::new(iter.enumerate().map(|(i, x)| {
                 let mut arr = ZendHashTable::new();
-                arr.push(i);
-                arr.push(x.inner);
+                arr.push(i).unwrap();
+                arr.push(x.inner).unwrap();
                 arr.into_zval(false).unwrap().into()
             })),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
@@ -534,6 +546,9 @@ impl ArrayIterator {
     ///
     /// After `false` is returned, `skip_while()`’s job is over, and the rest of the elements are yielded.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @return self<T>
     /// @throws \LogicException
@@ -546,7 +561,7 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.skip_while(move |x| {
-                call_cached(&mut callback, [x.inner.shallow_clone()])
+                call_cached(&mut callback, &[x.inner.shallow_clone()])
                     .bool()
                     .unwrap()
             })),
@@ -562,6 +577,9 @@ impl ArrayIterator {
     ///
     /// After `false` is returned, `take_while()`’s job is over, and the rest of the elements are ignored.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @return self<T>
     /// @throws \LogicException
@@ -574,7 +592,7 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.take_while(move |x| {
-                call_cached(&mut callback, [x.inner.shallow_clone()])
+                call_cached(&mut callback, &[x.inner.shallow_clone()])
                     .bool()
                     .unwrap()
             })),
@@ -600,8 +618,10 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(
-                iter.map(move |x| ZVal::from(call_cached(&mut callback, [x.inner.shallow_clone()])))
-                    .take_while(|x| !x.inner.is_null())
+                iter.map(move |x| ZVal::from(call_cached(&mut callback, &[x.inner])))
+                    .take_while(|x| {
+                        x.inner.is_null()
+                    })
             ),
             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
         ));
@@ -613,8 +633,11 @@ impl ArrayIterator {
     ///
     /// `skip(n)` skips elements until `n` elements are skipped or the end of the iterator is reached (whichever happens first). After that, all the remaining elements are yielded. In particular, if the original iterator is too short, then the returned iterator is empty.
     ///
+    /// Note: If a previous step has resulted in an error, it will be silently skipped and never thrown.
+    ///
     /// @return self<T>
     /// @throws \LogicException
+    /// @throws \ArithmeticError
     pub fn skip(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
@@ -622,7 +645,7 @@ impl ArrayIterator {
         let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
-            Box::new(iter.skip(n as usize)),
+            Box::new(iter.skip(usize::try_from(n)?)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
@@ -637,6 +660,7 @@ impl ArrayIterator {
     ///
     /// @return self<T>
     /// @throws \LogicException
+    /// @throws \ArithmeticError
     pub fn take(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
         n: i64,
@@ -644,7 +668,7 @@ impl ArrayIterator {
         let iter = this.iter.take().ok_or(IterError::Moved)?;
         this.iter = Some(match_iter_result_type!(
             iter,
-            Box::new(iter.take(n as usize)),
+            Box::new(iter.take(usize::try_from(n)?)),
             IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
             IterBox::ExactSize => IterBox::ExactSize,
             IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
@@ -690,9 +714,9 @@ impl ArrayIterator {
         this.iter = Some(match_iter_result_type!(
             iter,
             Box::new(iter.flat_map(move |x| {
-                let arr = call_cached(&mut callback, [x.inner]);
+                let arr = call_cached(&mut callback, &[x.inner]);
                 if let Some(arr) = arr.array() {
-                    arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                    arr.values().map(Into::into).collect::<Vec<_>>()
                 } else {
                     vec![]
                 }
@@ -708,6 +732,9 @@ impl ArrayIterator {
     ///
     /// This is useful when you have an iterator of iterators or an iterator of things that can be turned into iterators and you want to remove one level of indirection.
     ///
+    /// Note: If the element is not an array, the element will be returned as is. This behaviour
+    /// should not be relied upon and may change in the future to throw an exception instead.
+    ///
     /// @template U of array<V>
     /// @return self<V>
     /// @throws \LogicException
@@ -720,8 +747,9 @@ impl ArrayIterator {
             Box::new(iter.flat_map(|x| {
                 if x.inner.is_array() {
                     let arr = x.inner.array().unwrap();
-                    arr.values().map(|x| x.into()).collect::<Vec<_>>()
+                    arr.values().map(Into::into).collect::<Vec<_>>()
                 } else {
+                    // TODO: consider returning an error here
                     vec![x]
                 }
             })),
@@ -766,6 +794,8 @@ impl ArrayIterator {
     ///
     /// It’s more common for `inspect()` to be used as a debugging tool than to exist in your final code, but applications may find it useful in certain situations when errors need to be logged before being discarded.
     ///
+    /// Note: If a previous step has resulted in an error, it will not cause the closure to be called.
+    ///
     /// @param callable(T): void $callback
     /// @return self<T>
     /// @throws \LogicException
@@ -778,7 +808,7 @@ impl ArrayIterator {
         this.iter = Some(match_iter_same_type!(
             iter,
             Box::new(iter.inspect(move |x| {
-                call_cached(&mut callback, [x.inner.shallow_clone()]);
+                call_cached(&mut callback, &[x.inner.shallow_clone()]);
             })),
             IterBox::DoubleEndedExactSize
                 | IterBox::DoubleEnded
@@ -799,14 +829,14 @@ impl ArrayIterator {
     /// @throws \LogicException
     pub fn collect(&mut self) -> Result<Vec<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.map(|x| x.inner).collect::<Vec<_>>(),
+                Ok(iter.map(|x| x.inner).collect::<Vec<_>>()),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -828,6 +858,9 @@ impl ArrayIterator {
     ///
     /// The predicate passed to `partition()` can return `true`, or `false`. `partition()` returns a pair, all of the elements for which it returned true, and all of the elements for which it returned false.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @return array{list<T>, list<T>}
     /// @throws \LogicException
@@ -837,34 +870,34 @@ impl ArrayIterator {
             self.iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |iter| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
-                        iter.partition(|x| {
-                            call_cached(&mut callback, [x.inner.shallow_clone()])
+                        Ok(iter.partition(|x| {
+                            call_cached(&mut callback, &[x.inner.shallow_clone()])
                                 .bool()
                                 .unwrap()
-                        }),
+                        })),
                         IterBox::DoubleEndedExactSize
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })?; // TODO: check if shallow_clone is necessary
 
         let mut result = ZendHashTable::new();
 
         let mut left_result = ZendHashTable::new();
         for x in left {
-            left_result.push(x.inner);
+            left_result.push(x.inner)?;
         }
 
         let mut right_result = ZendHashTable::new();
         for x in right {
-            right_result.push(x.inner);
+            right_result.push(x.inner)?;
         }
 
-        result.push(left_result);
-        result.push(right_result);
+        result.push(left_result)?;
+        result.push(right_result)?;
 
         Ok(result)
     }
@@ -895,24 +928,19 @@ impl ArrayIterator {
     /// @return U
     /// @throws \LogicException
     pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval, IterError> {
-        let mut acc = initial.shallow_clone();
         let mut callback = callback;
-        self.iter
-            .as_mut()
-            .map_or(Err(IterError::Consumed), |iter| {
-                Ok(match_iter_type!(
-                    iter,
-                    for x in iter {
-                        acc = call_cached(&mut callback, [acc.shallow_clone(), x.inner]);
-                    },
-                    IterBox::DoubleEndedExactSize
-                        | IterBox::DoubleEnded
-                        | IterBox::ExactSize
-                        | IterBox::Iterator
-                ))
-            })?; // TODO: Check if correct with shallow_clone
+        let iter = self.iter.take().ok_or(IterError::Moved)?;
 
-        Ok(acc)
+        match_iter_type!(
+            iter,
+            Ok(iter.fold(initial.shallow_clone(), |acc, x| {
+                call_cached(&mut callback, &[acc, x.inner])
+            })),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        )
     }
 
     /// Reduces the elements to a single one, by repeatedly applying a reducing operation.
@@ -927,20 +955,18 @@ impl ArrayIterator {
     pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.fold(None, |acc, x| {
-                    if let Some(acc) = acc {
-                        Some(call_cached(&mut callback, [acc, x.inner]))
-                    } else {
-                        Some(x.inner)
-                    }
-                }),
+                Ok(iter
+                    .reduce(|acc, x| {
+                        ZVal::from(call_cached(&mut callback, &[acc.inner, x.inner]))
+                    })
+                    .map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -952,19 +978,22 @@ impl ArrayIterator {
     ///
     /// An empty iterator returns `true`.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @throws \LogicException
     pub fn all(&mut self, callback: ZCallable) -> Result<bool, IterError> {
         let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.all(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() }),
+                Ok(iter.all(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -976,19 +1005,22 @@ impl ArrayIterator {
     ///
     /// An empty iterator returns `false`.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @throws \LogicException
     pub fn any(&mut self, callback: ZCallable) -> Result<bool, IterError> {
         let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.any(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() }),
+                Ok(iter.any(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -1000,6 +1032,9 @@ impl ArrayIterator {
     ///
     /// If you need the index of the element, see `position()`.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @return T|null
     /// @throws \LogicException
@@ -1009,7 +1044,7 @@ impl ArrayIterator {
             Ok(match_iter_type!(
                 iter,
                 iter.find(|x| {
-                    call_cached(&mut callback, [x.inner.shallow_clone()])
+                    call_cached(&mut callback, &[x.inner.shallow_clone()])
                         .bool()
                         .unwrap()
                 })
@@ -1032,21 +1067,21 @@ impl ArrayIterator {
     pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.find_map(|x| {
-                    let res = call_cached(&mut callback, [x.inner]);
+                Ok(iter.find_map(|x| {
+                    let res = call_cached(&mut callback, &[x.inner]);
                     if res.is_null() {
                         None
                     } else {
                         Some(res)
                     }
-                }),
+                })),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -1056,22 +1091,24 @@ impl ArrayIterator {
     ///
     /// `position()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`.
     ///
+    /// Note: If the closure does not return a boolean, it will be interpreted as `false`.
+    ///
     /// # Overflow Behavior
     /// The method does no guarding against overflows, so if there are more than `usize::MAX` non-matching elements, it either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
     ///
     /// # Panics
-    /// This function might panic if the iterator has more than `usize::MAX` non-matching elements.
+    /// - This function might panic if the iterator has more than `usize::MAX` non-matching elements.
+    /// - If the closure does not return a boolean
     ///
     /// @param callable(T): bool $callback
     /// @return int|null
     /// @throws \LogicException
-    pub fn position(&mut self, callback: ZCallable) -> Result<Option<i64>, IterError> {
+    pub fn position(&mut self, callback: ZCallable) -> Result<Option<usize>, IterError> {
         let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             Ok(match_iter_type!(
                 iter,
-                iter.position(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() })
-                    .map(|x| x as i64),
+                iter.position(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap()),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
@@ -1086,17 +1123,19 @@ impl ArrayIterator {
     ///
     /// `rposition()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`.
     ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
     /// @param callable(T): bool $callback
     /// @return int|null
     /// @throws \LogicException
     /// @throws \DomainException
-    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<i64>, IterError> {
+    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<usize>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             let mut callback = callback;
             match_iter_type!(
                 iter,
-                iter.rposition(|x| { call_cached(&mut callback, [x.inner]).bool().unwrap() })
-                    .map(|x| x as i64),
+                iter.rposition(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap()),
                 IterBox::DoubleEndedExactSize,
                 _ => Err(IterError::Unsupported("rposition".to_string(), "DoubleEndedExactSize".to_string()))
             )
@@ -1111,14 +1150,14 @@ impl ArrayIterator {
     /// @throws \LogicException
     pub fn max(&mut self) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.max().map(|x| x.inner),
+                Ok(iter.max().map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -1130,14 +1169,14 @@ impl ArrayIterator {
     /// @throws \LogicException
     pub fn min(&mut self) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
+            match_iter_type!(
                 iter,
-                iter.min().map(|x| x.inner),
+                Ok(iter.min().map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
-            ))
+            )
         })
     }
 
@@ -1154,7 +1193,7 @@ impl ArrayIterator {
             Ok(match_iter_type!(
                 iter,
                 iter.max_by_key(|x| ZVal {
-                    inner: call_cached(&mut callback, [x.inner.shallow_clone()])
+                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
                 })
                 .map(|x| x.inner),
                 IterBox::DoubleEndedExactSize
@@ -1169,6 +1208,9 @@ impl ArrayIterator {
     ///
     /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
     ///
+    /// # Panics
+    /// - If the comparison function does not return an integer
+    ///
     /// @param callable(T, T): int $callback
     /// @return T|null
     /// @throws \LogicException
@@ -1180,7 +1222,7 @@ impl ArrayIterator {
                 iter.max_by(|x, y| {
                     call_cached(
                         &mut callback,
-                        [x.inner.shallow_clone(), y.inner.shallow_clone()],
+                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
                     )
                     .long()
                     .unwrap()
@@ -1208,7 +1250,7 @@ impl ArrayIterator {
             Ok(match_iter_type!(
                 iter,
                 iter.min_by_key(|x| ZVal {
-                    inner: call_cached(&mut callback, [x.inner.shallow_clone()])
+                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
                 })
                 .map(|x| x.inner),
                 IterBox::DoubleEndedExactSize
@@ -1223,6 +1265,9 @@ impl ArrayIterator {
     ///
     /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
     ///
+    /// # Panics
+    /// - If the comparison function does not return an integer
+    ///
     /// @param callable(T, T): int $callback
     /// @return T|null
     /// @throws \LogicException
@@ -1234,7 +1279,7 @@ impl ArrayIterator {
                 iter.min_by(|x, y| {
                     call_cached(
                         &mut callback,
-                        [x.inner.shallow_clone(), y.inner.shallow_clone()],
+                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
                     )
                     .long()
                     .unwrap()
@@ -1289,11 +1334,11 @@ impl ArrayIterator {
                     .iter
                     .as_mut()
                     .map_or(Err(IterError::Consumed), |other| {
-                        Ok(match_iter_type!(
+                        match_iter_type!(
                             iter,
                             match_iter_type!(
                                 other,
-                                iter.cmp(other),
+                                Ok(iter.cmp(other)),
                                 IterBox::DoubleEndedExactSize
                                     | IterBox::DoubleEnded
                                     | IterBox::ExactSize
@@ -1303,7 +1348,7 @@ impl ArrayIterator {
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
                                 | IterBox::Iterator
-                        ))
+                        )
                     })
             })
             .map(|x| match x {
@@ -1326,11 +1371,11 @@ impl ArrayIterator {
                     .iter
                     .as_mut()
                     .map_or(Err(IterError::Consumed), |other| {
-                        Ok(match_iter_type!(
+                        match_iter_type!(
                             iter,
                             match_iter_type!(
                                 other,
-                                iter.partial_cmp(other),
+                                Ok(iter.partial_cmp(other)),
                                 IterBox::DoubleEndedExactSize
                                     | IterBox::DoubleEnded
                                     | IterBox::ExactSize
@@ -1340,7 +1385,7 @@ impl ArrayIterator {
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
                                 | IterBox::Iterator
-                        ))
+                        )
                     })
             })
             .map(|x| match x {
@@ -1361,11 +1406,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.eq(other),
+                            Ok(iter.eq(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1375,7 +1420,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1390,11 +1435,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.ne(other),
+                            Ok(iter.ne(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1404,7 +1449,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1419,11 +1464,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.lt(other),
+                            Ok(iter.lt(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1433,7 +1478,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1448,11 +1493,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.le(other),
+                            Ok(iter.le(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1462,7 +1507,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1477,11 +1522,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.gt(other),
+                            Ok(iter.gt(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1491,7 +1536,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1506,11 +1551,11 @@ impl ArrayIterator {
                 .iter
                 .as_mut()
                 .map_or(Err(IterError::Consumed), |other| {
-                    Ok(match_iter_type!(
+                    match_iter_type!(
                         iter,
                         match_iter_type!(
                             other,
-                            iter.ge(other),
+                            Ok(iter.ge(other)),
                             IterBox::DoubleEndedExactSize
                                 | IterBox::DoubleEnded
                                 | IterBox::ExactSize
@@ -1520,7 +1565,7 @@ impl ArrayIterator {
                             | IterBox::DoubleEnded
                             | IterBox::ExactSize
                             | IterBox::Iterator
-                    ))
+                    )
                 })
         })
     }
@@ -1555,11 +1600,12 @@ impl ArrayIterator {
     /// @return T|null
     /// @throws \LogicException
     /// @throws \DomainException
+    /// @throws \ArithmeticError
     pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
-                iter.nth_back(n as usize).map(|x| x.inner),
+                iter.nth_back(usize::try_from(n)?).map(|x| x.inner),
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
                 _ => Err(IterError::Unsupported("nth_back".to_string(), "DoubleEnded".to_string()))
             )
@@ -1600,7 +1646,7 @@ impl ArrayIterator {
             match_iter_type!(
                 iter,
                 iter.rfold(initial, |acc, x| {
-                    call_cached(&mut callback, [acc.shallow_clone(), x.inner])
+                    call_cached(&mut callback, &[acc, x.inner])
                 }),
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
                 _ => Err(IterError::Unsupported("rfold".to_string(), "DoubleEnded".to_string()))
@@ -1627,7 +1673,7 @@ impl ArrayIterator {
             match_iter_type!(
                 iter,
                 iter.rfind(|x| {
-                    call_cached(&mut callback, [x.inner.shallow_clone()]).bool().unwrap()
+                    call_cached(&mut callback, &[x.inner.shallow_clone()]).bool().unwrap()
                 }).map(|x| x.inner),
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
                 _ => Err(IterError::Unsupported("rfind".to_string(), "DoubleEnded".to_string()))
@@ -1643,11 +1689,12 @@ impl ArrayIterator {
     /// This function has the same safety guarantees as the `size_hint()` function.
     /// @throws \LogicException
     /// @throws \DomainException
+    /// @throws \ArithmeticError
     fn len(&mut self) -> Result<i64, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
-                iter.len() as i64,
+                iter.len().try_into()?,
                 IterBox::DoubleEndedExactSize | IterBox::ExactSize,
                 _ => Err(IterError::Unsupported("len".to_string(), "ExactSize".to_string()))
             )
@@ -1662,6 +1709,7 @@ impl<T> DoubleEndedExactSizeIterator for T where
 {
 }
 
+#[allow(dead_code)]
 enum IterBox<'a> {
     DoubleEnded(Box<dyn DoubleEndedIterator<Item = ZVal> + 'a>),
     DoubleEndedExactSize(Box<dyn DoubleEndedExactSizeIterator<Item = ZVal> + 'a>),
@@ -1686,14 +1734,15 @@ enum IterBox<'a> {
 //     retval
 // }
 
+#[allow(clippy::inline_always)]
 #[inline(always)]
-fn call_cached<const N: usize>(callback: &mut ZCallable, args: [Zval; N]) -> Zval {
+fn call_cached<const N: usize>(callback: &mut ZCallable, args: &[Zval; N]) -> Zval {
     let mut retval = Zval::new();
     callback.fci.params = args.as_ptr() as *mut _;
-    callback.fci.param_count = N as _;
+    callback.fci.param_count = N.try_into().unwrap();
     callback.fci.retval = &mut retval;
     // println!("callback.fci.param_count: {}", callback.fci.param_count);
-    let _result = unsafe {
+    unsafe {
         zend_call_function(&mut callback.fci, &mut callback.fcc);
     };
 
@@ -1706,7 +1755,6 @@ pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
 }
 
 pub struct ZCallable {
-    zval: Zval,
     fci: ffi::zend_fcall_info,
     fcc: ffi::zend_fcall_info_cache,
 }
@@ -1714,10 +1762,11 @@ pub struct ZCallable {
 impl<'a> FromZval<'a> for ZCallable {
     const TYPE: DataType = DataType::Callable;
 
+    #[allow(clippy::similar_names)]
     fn from_zval(zval: &'a Zval) -> Option<Self> {
         let mut fci = ffi::zend_fcall_info {
             size: std::mem::size_of::<ffi::zend_fcall_info>(),
-            function_name: ZVal::null().inner,
+            function_name: ZVal::default().inner,
             retval: std::ptr::null_mut(),
             params: std::ptr::null_mut(),
             object: std::ptr::null_mut(),
@@ -1741,11 +1790,7 @@ impl<'a> FromZval<'a> for ZCallable {
                 std::ptr::null_mut(),
             );
         }
-        Some(ZCallable {
-            zval: zval.shallow_clone(),
-            fci,
-            fcc,
-        })
+        Some(ZCallable { fci, fcc })
     }
 }
 
@@ -1775,11 +1820,9 @@ pub struct ZVal {
     inner: Zval,
 }
 
-impl ZVal {
-    pub fn null() -> Self {
-        let mut inner = Zval::new();
-        inner.set_null();
-        Self { inner }
+impl Default for ZVal {
+    fn default() -> Self {
+        Self { inner: Zval::new() }
     }
 }
 
@@ -1815,12 +1858,12 @@ impl From<Zval> for ZVal {
     }
 }
 
-impl Into<Option<Zval>> for ZVal {
-    fn into(self) -> Option<zval> {
-        if self.inner.is_null() {
+impl From<ZVal> for Option<Zval> {
+    fn from(val: ZVal) -> Self {
+        if val.inner.is_null() {
             None
         } else {
-            Some(self.inner)
+            Some(val.inner)
         }
     }
 }
@@ -1831,6 +1874,7 @@ impl Ord for ZVal {
     }
 }
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for ZVal {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         if self.inner.is_null() && other.inner.is_null() {

@@ -138,123 +138,25 @@ impl ArrayIterator {
         }
     }
 
-    /// Advances the iterator and returns the next value.
+    /// Tests if every element of the iterator matches a predicate.
     ///
-    /// Returns `null` when iteration is finished. Individual iterator implementations may choose to resume iteration, and so calling next() again may or may not eventually start returning values again at some point.
+    /// `all()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if they all return `true`, then so does `all()`. If any of them return `false`, it returns `false`.
     ///
-    /// @return T|null
-    #[rename("next")]
-    pub fn php_next(&mut self) -> Result<Option<Zval>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.next().map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        })
-    }
-
-    /// Returns the bounds on the remaining length of the iterator.
+    /// `all()` is short-circuiting; in other words, it will stop processing as soon as it finds a `false`, given that no matter what else happens, the result will also be `false`.
     ///
-    /// Specifically, size_hint() returns a tuple where the first element is the lower bound, and the second element is the upper bound.
-    ///
-    /// The second half of the tuple that is returned is an Option<usize>. A None here means that either there is no known upper bound, or the upper bound is larger than usize.
-    ///
-    /// # Implementation notes
-    /// It is not enforced that an iterator implementation yields the declared number of elements. A buggy iterator may yield less than the lower bound or more than the upper bound of elements.
-    ///
-    /// size_hint() is primarily intended to be used for optimizations such as reserving space for the elements of the iterator, but must not be trusted to e.g., omit bounds checks in unsafe code. An incorrect implementation of size_hint() should not lead to memory safety violations.
-    ///
-    /// That said, the implementation should provide a correct estimation, because otherwise it would be a violation of the trait’s protocol.
-    ///
-    /// The default implementation returns (0, None) which is correct for any iterator.
-    ///
-    /// @return array{int, int|null}
-    /// @throws \LogicException
-    /// @throws \Exception
-    pub fn size_hint(&mut self) -> Result<ZBox<ZendHashTable>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            let size_hint = match_iter_type!(
-                iter,
-                iter.size_hint(),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            );
-
-            let (lower, upper) = size_hint;
-            let mut map = ZendHashTable::new();
-            map.push(lower)?;
-            map.push(upper.map_or(Ok(Zval::new()), |upper| {
-                let mut val = Zval::new();
-                val.set_long(i64::try_from(upper)?);
-                Ok::<Zval, IterError>(val)
-            })?)?;
-
-            Ok(map)
-        })
-    }
-
-    /// Consumes the iterator, counting the number of iterations and returning it.
-    ///
-    /// This method will call next repeatedly until `null` is encountered, returning the number of times it saw a value. Note that next has to be called at least once even if the iterator does not have any elements.
-    ///
-    /// # Overflow Behavior
-    /// The method does no guarding against overflows, so counting elements of an iterator with more than `usize::MAX` elements either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
+    /// An empty iterator returns `true`.
     ///
     /// # Panics
-    /// This function might panic if the iterator has more than `usize::MAX` elements.
-    pub fn count(&mut self) -> Result<usize, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.count()),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Consumes the iterator, returning the last element.
+    /// - If the closure does not return a boolean
     ///
-    /// This method will evaluate the iterator until it returns `null`. While doing so, it keeps track of the current element. After `null` is returned, `last()` will then return the last element it saw.
-    ///
-    /// @return T|null
-    pub fn last(&mut self) -> Result<Option<Zval>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.last().map(|x| x.inner)),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Returns the nth element of the iterator.
-    ///
-    /// Like most indexing operations, the count starts from zero, so `nth(0)` returns the first value, `nth(1)` the second, and so on.
-    ///
-    /// Note that all preceding elements, as well as the returned element, will be consumed from the iterator. That means that the preceding elements will be discarded, and also that calling `nth(0)` multiple times on the same iterator will return different elements.
-    ///
-    /// `nth()` will return `null` if `n` is greater than or equal to the length of the iterator.
-    ///
-    /// @return T|null
+    /// @param callable(T): bool $callback
     /// @throws \LogicException
-    /// @throws \ArithmeticError
-    pub fn nth(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
+    pub fn all(&mut self, callback: ZCallable) -> Result<bool, IterError> {
+        let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
-                Ok(iter.nth(usize::try_from(n)?).map(|x| x.inner)),
+                Ok(iter.all(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
@@ -263,40 +165,31 @@ impl ArrayIterator {
         })
     }
 
-    /// Creates an iterator starting at the same point, but stepping by the given amount at each iteration.
+    /// Tests if any element of the iterator matches a predicate.
     ///
-    /// Note 1: The first element of the iterator will always be returned, regardless of the step given.
+    /// `any()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if any of them return `true`, then so does `any()`. If they all return `false`, it returns `false`.
     ///
-    /// Note 2: The time at which ignored elements are pulled is not fixed. StepBy behaves like the sequence `self.next()`, `self.nth(step-1)`, `self.nth(step-1)`, …, but is also free to behave like the sequence `advance_n_and_return_first(&mut self, step)`, `advance_n_and_return_first(&mut self, step)`, … Which way is used may change for some iterators for performance reasons. The second way will advance the iterator earlier and may consume more items.
+    /// `any()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`, given that no matter what else happens, the result will also be `true`.
+    ///
+    /// An empty iterator returns `false`.
     ///
     /// # Panics
-    /// The method will panic if the given step is 0.
+    /// - If the closure does not return a boolean
     ///
-    /// @param positive-int $step
-    /// @return self<T>
+    /// @param callable(T): bool $callback
     /// @throws \LogicException
-    /// @throws \ValueError
-    /// @throws \ArithmeticError
-    pub fn step_by(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        step: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        if step == 0 {
-            return Err(IterError::ArgumentError(format!(
-                "Step must be greater than 0, {step} given"
-            )));
-        }
-
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.step_by(usize::try_from(step)?)),
-            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-            IterBox::ExactSize => IterBox::ExactSize,
-            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
+    pub fn any(&mut self, callback: ZCallable) -> Result<bool, IterError> {
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.any(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
     }
 
     /// Takes two iterators and creates a new iterator over both in sequence.
@@ -335,112 +228,148 @@ impl ArrayIterator {
         Ok(this)
     }
 
-    /// ‘Zips up’ two iterators into a single iterator of pairs.
+    /// Transforms an iterator into an `array`.
     ///
-    /// `zip()` returns a new iterator that will iterate over two other iterators, returning a tuple where the first element comes from the first iterator, and the second element comes from the second iterator.
+    /// `collect()` can take anything iterable, and turn it into a relevant collection. This is one of the more powerful methods in the standard library, used in a variety of contexts.
     ///
-    /// In other words, it zips two iterators together, into a single one.
+    /// The most basic pattern in which `collect()` is used is to turn one collection into another. You take an iterator do a bunch of transformations, and then `collect()` at the end.
     ///
-    /// If either iterator returns `null`, `next()` from the zipped iterator will return `null`. If the zipped iterator has no more elements to return then each further attempt to advance it will first try to advance the first iterator at most one time and if it still yielded an item try to advance the second iterator at most one time.
+    /// @return list<T>
+    /// @throws \LogicException
+    pub fn collect(&mut self) -> Result<Vec<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.map(|x| x.inner).collect::<Vec<_>>()),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
+    }
+
+    /// Lexicographically compares the elements of this Iterator with those of another.
     ///
-    /// To ‘undo’ the result of zipping up two iterators, see `unzip`.
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn cmp(&mut self, other: &mut ArrayIterator) -> Result<i8, IterError> {
+        self.iter
+            .as_mut()
+            .map_or(Err(IterError::Consumed), |iter| {
+                other
+                    .iter
+                    .as_mut()
+                    .map_or(Err(IterError::Consumed), |other| {
+                        match_iter_type!(
+                            iter,
+                            match_iter_type!(
+                                other,
+                                Ok(iter.cmp(other)),
+                                IterBox::DoubleEndedExactSize
+                                    | IterBox::DoubleEnded
+                                    | IterBox::ExactSize
+                                    | IterBox::Iterator
+                            ),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        )
+                    })
+            })
+            .map(|x| match x {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            })
+    }
+
+    /// Consumes the iterator, counting the number of iterations and returning it.
+    ///
+    /// This method will call next repeatedly until `null` is encountered, returning the number of times it saw a value. Note that next has to be called at least once even if the iterator does not have any elements.
+    ///
+    /// # Overflow Behavior
+    /// The method does no guarding against overflows, so counting elements of an iterator with more than `usize::MAX` elements either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
     ///
     /// # Panics
-    /// - The iterator panics if adding the values to the new array fails.
-    /// - The iterator panics if allocating the new array fails.
+    /// This function might panic if the iterator has more than `usize::MAX` elements.
+    pub fn count(&mut self) -> Result<usize, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.count()),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
+    }
+
+    /// Creates an iterator which gives the current iteration count as well as the next value.
     ///
-    /// @param self<U> $other
-    /// @return self<array{T, U}>
+    /// The iterator returned yields pairs `[i, val]`, where `i` is the current index of iteration and `val` is the value returned by the iterator.
+    ///
+    /// `enumerate()` keeps its count as a `usize`. If you want to count by a different sized integer, the `zip` function provides similar functionality.
+    ///
+    /// # Overflow Behavior
+    /// The method does no guarding against overflows, so enumerating more than `usize::MAX` elements either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
+    ///
+    /// # Panics
+    /// - The returned iterator might panic if the to-be-returned index would overflow a `usize`.
+    /// - The returned iterator might panic if adding the values to the new array fails.
+    /// - The returned iterator might panic if allocating the new array fails.
+    ///
+    /// @return self<array{int, T}>
     /// @throws \LogicException
-    /// @throws \ValueError
-    pub fn zip(
+    pub fn enumerate(
         #[this] this: &mut ZendClassObject<ArrayIterator>,
-        other: ZIterRS,
     ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
         let iter = this.iter.take().ok_or(IterError::Moved)?;
-        let mut other_iterator = other.clone();
-        let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
-            other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
-        )
-        .ok_or(IterError::ArgumentError("other".to_string()))?;
-
-        this.iter = Some(match_nested_iter_type!(
+        this.iter = Some(match_iter_result_type!(
             iter,
-            other_iterator,
-            other_iterator.iter.take().ok_or(anyhow::anyhow!("Iterator is not valid"))?,
-            Box::new(iter.zip(other_iterator).map(
-                |(x, y)| {
-                    let mut arr = ZendHashTable::new();
-                    arr.push(x.inner).unwrap();
-                    arr.push(y.inner).unwrap();
-                    arr.into_zval(false).unwrap().into()
-                },
-            )),
-            IterBox::DoubleEndedExactSize:
-                IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-                IterBox::ExactSize => IterBox::ExactSize,
-                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
-            IterBox::ExactSize:
-                IterBox::DoubleEndedExactSize | IterBox::ExactSize => IterBox::ExactSize,
-                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
-            IterBox::DoubleEnded | IterBox::Iterator:
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+            Box::new(iter.enumerate().map(|(i, x)| {
+                let mut arr = ZendHashTable::new();
+                arr.push(i).unwrap();
+                arr.push(x.inner).unwrap();
+                arr.into_zval(false).unwrap().into()
+            })),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
         ));
 
         Ok(this)
     }
 
-    /// Takes a closure and creates an iterator which calls that closure on each element.
+    /// Determines if the elements of this Iterator are equal to those of another.
     ///
-    /// `map()` transforms one iterator into another, by means of its argument. It produces a new iterator which calls this closure on each element of the original iterator.
-    ///
-    /// If you are good at thinking in types, you can think of `map()` like this: If you have an iterator that gives you elements of some type `A`, and you want an iterator of some other type `B`, you can use `map()`, passing a closure that takes an `A` and returns a `B`.
-    ///
-    /// `map()` is conceptually similar to a `for` loop. However, as `map()` is lazy, it is best used when you’re already working with other iterators. If you’re doing some sort of looping `for` a side effect, it’s considered more idiomatic to use `for` than `map()`.
-    ///
-    /// @param callable(T): U $callback
-    /// @return self<U>
+    /// @param self<T> $other
     /// @throws \LogicException
-    pub fn map(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        // this.chain.push(Iter::Map { callback });
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        let mut callback = callback;
-
-        this.iter = Some(match_iter_same_type!(
-            iter,
-            Box::new(iter.map(move |x| call_cached(&mut callback, &[x.inner]).into())),
-            IterBox::DoubleEndedExactSize
-                | IterBox::DoubleEnded
-                | IterBox::ExactSize
-                | IterBox::Iterator
-        ));
-        Ok(this)
-    }
-
-    /// Calls a closure on each element of an iterator.
-    ///
-    /// This is equivalent to using a `for` loop on the iterator, although break and continue are not possible from a closure. It’s generally more idiomatic to use a `for` loop, but `for_each` may be more legible when processing items at the end of longer iterator chains. In some cases `for_each` may also be faster than a loop, because it will use internal iteration on adapters like `Chain`.
-    ///
-    /// @param callable(T): void $callback
-    /// @throws \LogicException
-    pub fn for_each(&mut self, callback: ZCallable) -> Result<(), IterError> {
-        let mut callback = callback;
-        let iter = self.iter.as_mut().ok_or(IterError::Consumed)?;
-        match_iter_type!(
-            iter,
-            iter.for_each(|x| {
-                call_cached(&mut callback, &[x.inner]);
-            }),
-            IterBox::DoubleEndedExactSize
-                | IterBox::DoubleEnded
-                | IterBox::ExactSize
-                | IterBox::Iterator
-        );
-
-        Ok(())
+    pub fn eq(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.eq(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
     }
 
     /// Creates an iterator which uses a closure to determine if an element should be yielded.
@@ -502,195 +431,66 @@ impl ArrayIterator {
         Ok(this)
     }
 
-    /// Creates an iterator which gives the current iteration count as well as the next value.
+    /// Searches for an element of an iterator that satisfies a predicate.
     ///
-    /// The iterator returned yields pairs `[i, val]`, where `i` is the current index of iteration and `val` is the value returned by the iterator.
+    /// `find()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if any of them return `true`, then `find()` returns the value. If they all return `false`, it returns `null`.
     ///
-    /// `enumerate()` keeps its count as a `usize`. If you want to count by a different sized integer, the `zip` function provides similar functionality.
+    /// `find()` is short-circuiting; in other words, it will stop processing as soon as the closure returns `true`.
     ///
-    /// # Overflow Behavior
-    /// The method does no guarding against overflows, so enumerating more than `usize::MAX` elements either produces the wrong result or panics. If debug assertions are enabled, a panic is guaranteed.
-    ///
-    /// # Panics
-    /// - The returned iterator might panic if the to-be-returned index would overflow a `usize`.
-    /// - The returned iterator might panic if adding the values to the new array fails.
-    /// - The returned iterator might panic if allocating the new array fails.
-    ///
-    /// @return self<array{int, T}>
-    /// @throws \LogicException
-    pub fn enumerate(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.enumerate().map(|(i, x)| {
-                let mut arr = ZendHashTable::new();
-                arr.push(i).unwrap();
-                arr.push(x.inner).unwrap();
-                arr.into_zval(false).unwrap().into()
-            })),
-            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-            IterBox::ExactSize => IterBox::ExactSize,
-            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
-    }
-
-    // TODO: peekable
-
-    /// Creates an iterator that skips elements based on a predicate.
-    ///
-    /// `skip_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and ignore elements until it returns `false`.
-    ///
-    /// After `false` is returned, `skip_while()`’s job is over, and the rest of the elements are yielded.
+    /// If you need the index of the element, see `position()`.
     ///
     /// # Panics
     /// - If the closure does not return a boolean
     ///
     /// @param callable(T): bool $callback
-    /// @return self<T>
+    /// @return T|null
     /// @throws \LogicException
-    pub fn skip_while(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
+    pub fn find(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.skip_while(move |x| {
-                call_cached(&mut callback, &[x.inner.shallow_clone()])
-                    .bool()
-                    .unwrap()
-            })),
-            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.find(|x| {
+                    call_cached(&mut callback, &[x.inner.shallow_clone()])
+                        .bool()
+                        .unwrap()
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
     }
 
-    /// Creates an iterator that yields elements based on a predicate.
+    /// Applies function to the elements of iterator and returns the first non-`null` result.
     ///
-    /// `take_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and yield elements while it returns `true`.
-    ///
-    /// After `false` is returned, `take_while()`’s job is over, and the rest of the elements are ignored.
-    ///
-    /// # Panics
-    /// - If the closure does not return a boolean
-    ///
-    /// @param callable(T): bool $callback
-    /// @return self<T>
-    /// @throws \LogicException
-    pub fn take_while(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        let mut callback = callback;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.take_while(move |x| {
-                call_cached(&mut callback, &[x.inner.shallow_clone()])
-                    .bool()
-                    .unwrap()
-            })),
-            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
-    }
-
-    /// Creates an iterator that both yields elements based on a predicate and maps.
-    ///
-    /// `map_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and yield elements while it returns a value. Once `null` is returned the rest of the elements are ignored.
+    /// `iter.find_map(f)` is equivalent to `iter.filter_map(f).next()`.
     ///
     /// @param callable(T): U|null $callback
-    /// @return self<U>
+    /// @return U|null
     /// @throws \LogicException
-    pub fn map_while(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        callback: ZCallable,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
+    pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
         let mut callback = callback;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(
-                iter.map(move |x| ZVal::from(call_cached(&mut callback, &[x.inner])))
-                    .take_while(|x| {
-                        x.inner.is_null()
-                    })
-            ),
-            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.find_map(|x| {
+                    let res = call_cached(&mut callback, &[x.inner]);
+                    if res.is_null() {
+                        None
+                    } else {
+                        Some(res)
+                    }
+                })),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
     }
-
-    /// Creates an iterator that skips the first `n` elements.
-    ///
-    /// `skip(n)` skips elements until `n` elements are skipped or the end of the iterator is reached (whichever happens first). After that, all the remaining elements are yielded. In particular, if the original iterator is too short, then the returned iterator is empty.
-    ///
-    /// Note: If a previous step has resulted in an error, it will be silently skipped and never thrown.
-    ///
-    /// @return self<T>
-    /// @throws \LogicException
-    /// @throws \ArithmeticError
-    pub fn skip(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        n: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.skip(usize::try_from(n)?)),
-            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-            IterBox::ExactSize => IterBox::ExactSize,
-            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
-    }
-
-    /// Creates an iterator that yields the first `n` elements, or fewer if the underlying iterator ends sooner.
-    ///
-    /// `take(n)` yields elements until `n` elements are yielded or the end of the iterator is reached (whichever happens first). The returned iterator is a prefix of length `n` if the original iterator contains at least `n` elements, otherwise it contains all of the (fewer than `n`) elements of the original iterator.
-    ///
-    /// @return self<T>
-    /// @throws \LogicException
-    /// @throws \ArithmeticError
-    pub fn take(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        n: i64,
-    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
-        let iter = this.iter.take().ok_or(IterError::Moved)?;
-        this.iter = Some(match_iter_result_type!(
-            iter,
-            Box::new(iter.take(usize::try_from(n)?)),
-            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
-            IterBox::ExactSize => IterBox::ExactSize,
-            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
-        ));
-
-        Ok(this)
-    }
-
-    // TODO: scan
-    // fn scan(
-    //     #[this] this: &mut ZendClassObject<ArrayIterator>,
-    //     initial: ZVal,
-    //     callback: ZCallable,
-    // ) -> &mut ZendClassObject<ArrayIterator> {
-    //     this.chain.push(Iter::Scan {
-    //         initial: initial.inner,
-    //         callback,
-    //     });
-    //     this.double_ended = false;
-    //     this.exact_size = false;
-    //     this
-    // }
 
     /// Creates an iterator that works like map, but flattens nested structure.
     ///
@@ -760,6 +560,67 @@ impl ArrayIterator {
         Ok(this)
     }
 
+    /// Folds every element into an accumulator by applying an operation, returning the final result.
+    ///
+    /// `fold()` takes two arguments: an initial value, and a closure with two arguments: an ‘accumulator’, and an element. The closure returns the value that the accumulator should have for the next iteration.
+    ///
+    /// The initial value is the value the accumulator will have on the first call.
+    ///
+    /// After applying this closure to every element of the iterator, `fold()` returns the accumulator.
+    ///
+    /// This operation is sometimes called ‘reduce’ or ‘inject’.
+    ///
+    /// Folding is useful whenever you have a collection of something, and want to produce a single value from it.
+    ///
+    /// Note: `fold()`, and similar methods that traverse the entire iterator, might not terminate for infinite iterators, even on traits for which a result is determinable in finite time.
+    ///
+    /// Note: `reduce()` can be used to use the first element as the initial value, if the accumulator type and item type is the same.
+    ///
+    /// Note: `fold()` combines elements in a left-associative fashion. For associative operators like `+`, the order the elements are combined in is not important, but for non-associative operators like - the order will affect the final result. For a right-associative version of `fold()`, see `rfold()`.
+    ///
+    /// @param U $initial
+    /// @param callable(U, T): U $callback
+    /// @return U
+    /// @throws \LogicException
+    pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval, IterError> {
+        let mut callback = callback;
+        let iter = self.iter.take().ok_or(IterError::Moved)?;
+
+        match_iter_type!(
+            iter,
+            Ok(iter.fold(initial.shallow_clone(), |acc, x| {
+                call_cached(&mut callback, &[acc, x.inner])
+            })),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        )
+    }
+
+    /// Calls a closure on each element of an iterator.
+    ///
+    /// This is equivalent to using a `for` loop on the iterator, although break and continue are not possible from a closure. It’s generally more idiomatic to use a `for` loop, but `for_each` may be more legible when processing items at the end of longer iterator chains. In some cases `for_each` may also be faster than a loop, because it will use internal iteration on adapters like `Chain`.
+    ///
+    /// @param callable(T): void $callback
+    /// @throws \LogicException
+    pub fn for_each(&mut self, callback: ZCallable) -> Result<(), IterError> {
+        let mut callback = callback;
+        let iter = self.iter.as_mut().ok_or(IterError::Consumed)?;
+        match_iter_type!(
+            iter,
+            iter.for_each(|x| {
+                call_cached(&mut callback, &[x.inner]);
+            }),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        );
+
+        Ok(())
+    }
+
     /// This seems to be a no-op in PHP. Keeping it for compatibility.
     ///
     ///
@@ -786,6 +647,64 @@ impl ArrayIterator {
         ));
 
         Ok(this)
+    }
+
+    /// Determines if the elements of this Iterator are lexicographically greater than or equal to those of another.
+    ///
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn ge(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.ge(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
+    }
+
+    /// Determines if the elements of this Iterator are lexicographically greater than those of another.
+    ///
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn gt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.gt(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
     }
 
     /// Does something with each element of an iterator, passing the value on.
@@ -819,19 +738,16 @@ impl ArrayIterator {
         Ok(this)
     }
 
-    /// Transforms an iterator into an `array`.
+    /// Consumes the iterator, returning the last element.
     ///
-    /// `collect()` can take anything iterable, and turn it into a relevant collection. This is one of the more powerful methods in the standard library, used in a variety of contexts.
+    /// This method will evaluate the iterator until it returns `null`. While doing so, it keeps track of the current element. After `null` is returned, `last()` will then return the last element it saw.
     ///
-    /// The most basic pattern in which `collect()` is used is to turn one collection into another. You take an iterator do a bunch of transformations, and then `collect()` at the end.
-    ///
-    /// @return list<T>
-    /// @throws \LogicException
-    pub fn collect(&mut self) -> Result<Vec<Zval>, IterError> {
+    /// @return T|null
+    pub fn last(&mut self) -> Result<Option<Zval>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
-                Ok(iter.map(|x| x.inner).collect::<Vec<_>>()),
+                Ok(iter.last().map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
@@ -840,19 +756,442 @@ impl ArrayIterator {
         })
     }
 
-    // TODO: wait for stable
-    // pub fn collect_into(&mut self, collection: &mut Zval) -> Result<()> {
-    //     let arr: &mut ZendHashTable = collection.array_mut().unwrap();
-    //     self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
-    //         match_iter_type!(
-    //             iter,
-    //             for x in iter {
-    //                 arr.push(x.inner);
-    //             },
-    //             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
-    //         )
-    //     })
-    // }
+    /// Determines if the elements of this Iterator are lexicographically less or equal to those of another.
+    ///
+    /// @param self<T> $other
+    /// @Throws \LogicException
+    pub fn le(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.le(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
+    }
+
+    /// Returns the exact remaining length of the iterator.
+    ///
+    /// The implementation ensures that the iterator will return exactly `len()` more times a `T` value, before returning `null`. This method has a default implementation, so you usually should not implement it directly. However, if you can provide a more efficient implementation, you can do so. See the trait-level docs for an example.
+    ///
+    /// This function has the same safety guarantees as the `size_hint()` function.
+    /// @throws \LogicException
+    /// @throws \DomainException
+    /// @throws \ArithmeticError
+    fn len(&mut self) -> Result<i64, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                iter.len().try_into()?,
+                IterBox::DoubleEndedExactSize | IterBox::ExactSize,
+                _ => Err(IterError::Unsupported("len".to_string(), "ExactSize".to_string()))
+            )
+        })
+    }
+
+    /// Determines if the elements of this Iterator are lexicographically less than those of another.
+    ///
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn lt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.lt(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
+    }
+
+    /// Takes a closure and creates an iterator which calls that closure on each element.
+    ///
+    /// `map()` transforms one iterator into another, by means of its argument. It produces a new iterator which calls this closure on each element of the original iterator.
+    ///
+    /// If you are good at thinking in types, you can think of `map()` like this: If you have an iterator that gives you elements of some type `A`, and you want an iterator of some other type `B`, you can use `map()`, passing a closure that takes an `A` and returns a `B`.
+    ///
+    /// `map()` is conceptually similar to a `for` loop. However, as `map()` is lazy, it is best used when you’re already working with other iterators. If you’re doing some sort of looping `for` a side effect, it’s considered more idiomatic to use `for` than `map()`.
+    ///
+    /// @param callable(T): U $callback
+    /// @return self<U>
+    /// @throws \LogicException
+    pub fn map(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        callback: ZCallable,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        // this.chain.push(Iter::Map { callback });
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        let mut callback = callback;
+
+        this.iter = Some(match_iter_same_type!(
+            iter,
+            Box::new(iter.map(move |x| call_cached(&mut callback, &[x.inner]).into())),
+            IterBox::DoubleEndedExactSize
+                | IterBox::DoubleEnded
+                | IterBox::ExactSize
+                | IterBox::Iterator
+        ));
+        Ok(this)
+    }
+
+    /// Creates an iterator that both yields elements based on a predicate and maps.
+    ///
+    /// `map_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and yield elements while it returns a value. Once `null` is returned the rest of the elements are ignored.
+    ///
+    /// @param callable(T): U|null $callback
+    /// @return self<U>
+    /// @throws \LogicException
+    pub fn map_while(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        callback: ZCallable,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        let mut callback = callback;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(
+                iter.map(move |x| ZVal::from(call_cached(&mut callback, &[x.inner])))
+                    .take_while(|x| {
+                        x.inner.is_null()
+                    })
+            ),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// Returns the maximum element of an iterator.
+    ///
+    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn max(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.max().map(|x| x.inner)),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
+    }
+
+    /// Returns the element that gives the maximum value with respect to the specified comparison function.
+    ///
+    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// # Panics
+    /// - If the comparison function does not return an integer
+    ///
+    /// @param callable(T, T): int $callback
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn max_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.max_by(|x, y| {
+                    call_cached(
+                        &mut callback,
+                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
+                    )
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
+    }
+
+    /// Returns the element that gives the maximum value from the specified function.
+    ///
+    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// @param callable(T): U $callback
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn max_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.max_by_key(|x| ZVal {
+                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
+    }
+
+    /// Returns the minimum element of an iterator.
+    ///
+    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn min(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.min().map(|x| x.inner)),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
+    }
+
+    /// Returns the element that gives the minimum value with respect to the specified comparison function.
+    ///
+    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// # Panics
+    /// - If the comparison function does not return an integer
+    ///
+    /// @param callable(T, T): int $callback
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn min_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.min_by(|x, y| {
+                    call_cached(
+                        &mut callback,
+                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
+                    )
+                    .long()
+                    .unwrap()
+                    .cmp(&0)
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
+    }
+
+    /// Returns the element that gives the minimum value from the specified function.
+    ///
+    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
+    ///
+    /// @param callable(T): U $callback
+    /// @return T|null
+    /// @throws \LogicException
+    pub fn min_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
+        let mut callback = callback;
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.min_by_key(|x| ZVal {
+                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
+                })
+                .map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
+    }
+
+    /// Determines if the elements of this Iterator are not equal to those of another.
+    ///
+    /// @param self<T> $other
+    /// @throws \LogicException
+    pub fn ne(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            other
+                .iter
+                .as_mut()
+                .map_or(Err(IterError::Consumed), |other| {
+                    match_iter_type!(
+                        iter,
+                        match_iter_type!(
+                            other,
+                            Ok(iter.ne(other)),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        ),
+                        IterBox::DoubleEndedExactSize
+                            | IterBox::DoubleEnded
+                            | IterBox::ExactSize
+                            | IterBox::Iterator
+                    )
+                })
+        })
+    }
+
+    /// Advances the iterator and returns the next value.
+    ///
+    /// Returns `null` when iteration is finished. Individual iterator implementations may choose to resume iteration, and so calling next() again may or may not eventually start returning values again at some point.
+    ///
+    /// @return T|null
+    #[rename("next")]
+    pub fn php_next(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            Ok(match_iter_type!(
+                iter,
+                iter.next().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            ))
+        })
+    }
+
+    /// Removes and returns an element from the end of the iterator.
+    ///
+    /// Returns `null` when there are no more elements.
+    ///
+    /// @return T|null
+    /// @throws \LogicException
+    /// @throws \DomainException
+    pub fn next_back(&mut self) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                iter.next_back().map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("next_back".to_string(), "DoubleEnded".to_string()))
+            )
+        })
+    }
+
+    /// Returns the nth element of the iterator.
+    ///
+    /// Like most indexing operations, the count starts from zero, so `nth(0)` returns the first value, `nth(1)` the second, and so on.
+    ///
+    /// Note that all preceding elements, as well as the returned element, will be consumed from the iterator. That means that the preceding elements will be discarded, and also that calling `nth(0)` multiple times on the same iterator will return different elements.
+    ///
+    /// `nth()` will return `null` if `n` is greater than or equal to the length of the iterator.
+    ///
+    /// @return T|null
+    /// @throws \LogicException
+    /// @throws \ArithmeticError
+    pub fn nth(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                Ok(iter.nth(usize::try_from(n)?).map(|x| x.inner)),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            )
+        })
+    }
+
+    /// Returns the `n`th element from the end of the iterator.
+    ///
+    /// This is essentially the reversed version of `nth()`. Although like most indexing operations, the count starts from zero, so `nth_back(0)` returns the first value from the end, `nth_back(1)` the second, and so on.
+    ///
+    /// Note that all elements between the end and the returned element will be consumed, including the returned element. This also means that calling `nth_back(0)` multiple times on the same iterator will return different elements.
+    ///
+    /// `nth_back()` will return `null` if `n` is greater than or equal to the length of the iterator.
+    ///
+    /// @return T|null
+    /// @throws \LogicException
+    /// @throws \DomainException
+    /// @throws \ArithmeticError
+    pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            match_iter_type!(
+                iter,
+                iter.nth_back(usize::try_from(n)?).map(|x| x.inner),
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
+                _ => Err(IterError::Unsupported("nth_back".to_string(), "DoubleEnded".to_string()))
+            )
+        })
+    }
+
+    /// Lexicographically compares the PartialOrd elements of this Iterator with those of another. The comparison works like short-circuit evaluation, returning a result without comparing the remaining elements. As soon as an order can be determined, the evaluation stops and a result is returned.
+    ///
+    /// @param self<T> $other
+    /// @return int|null
+    /// @throws \LogicException
+    pub fn partial_cmp(&mut self, other: &mut ArrayIterator) -> Result<Option<i8>, IterError> {
+        self.iter
+            .as_mut()
+            .map_or(Err(IterError::Consumed), |iter| {
+                other
+                    .iter
+                    .as_mut()
+                    .map_or(Err(IterError::Consumed), |other| {
+                        match_iter_type!(
+                            iter,
+                            match_iter_type!(
+                                other,
+                                Ok(iter.partial_cmp(other)),
+                                IterBox::DoubleEndedExactSize
+                                    | IterBox::DoubleEnded
+                                    | IterBox::ExactSize
+                                    | IterBox::Iterator
+                            ),
+                            IterBox::DoubleEndedExactSize
+                                | IterBox::DoubleEnded
+                                | IterBox::ExactSize
+                                | IterBox::Iterator
+                        )
+                    })
+            })
+            .map(|x| match x {
+                Some(std::cmp::Ordering::Less) => Some(-1),
+                Some(std::cmp::Ordering::Equal) => Some(0),
+                Some(std::cmp::Ordering::Greater) => Some(1),
+                None => None,
+            })
+    }
 
     /// Consumes an iterator, creating two collections from it.
     ///
@@ -902,189 +1241,6 @@ impl ArrayIterator {
         Ok(result)
     }
 
-    // TODO: try_fold
-    // TODO: try_for_each
-
-    /// Folds every element into an accumulator by applying an operation, returning the final result.
-    ///
-    /// `fold()` takes two arguments: an initial value, and a closure with two arguments: an ‘accumulator’, and an element. The closure returns the value that the accumulator should have for the next iteration.
-    ///
-    /// The initial value is the value the accumulator will have on the first call.
-    ///
-    /// After applying this closure to every element of the iterator, `fold()` returns the accumulator.
-    ///
-    /// This operation is sometimes called ‘reduce’ or ‘inject’.
-    ///
-    /// Folding is useful whenever you have a collection of something, and want to produce a single value from it.
-    ///
-    /// Note: `fold()`, and similar methods that traverse the entire iterator, might not terminate for infinite iterators, even on traits for which a result is determinable in finite time.
-    ///
-    /// Note: `reduce()` can be used to use the first element as the initial value, if the accumulator type and item type is the same.
-    ///
-    /// Note: `fold()` combines elements in a left-associative fashion. For associative operators like `+`, the order the elements are combined in is not important, but for non-associative operators like - the order will affect the final result. For a right-associative version of `fold()`, see `rfold()`.
-    ///
-    /// @param U $initial
-    /// @param callable(U, T): U $callback
-    /// @return U
-    /// @throws \LogicException
-    pub fn fold(&mut self, initial: &Zval, callback: ZCallable) -> Result<Zval, IterError> {
-        let mut callback = callback;
-        let iter = self.iter.take().ok_or(IterError::Moved)?;
-
-        match_iter_type!(
-            iter,
-            Ok(iter.fold(initial.shallow_clone(), |acc, x| {
-                call_cached(&mut callback, &[acc, x.inner])
-            })),
-            IterBox::DoubleEndedExactSize
-                | IterBox::DoubleEnded
-                | IterBox::ExactSize
-                | IterBox::Iterator
-        )
-    }
-
-    /// Reduces the elements to a single one, by repeatedly applying a reducing operation.
-    ///
-    /// If the iterator is empty, returns `null`; otherwise, returns the result of the reduction.
-    ///
-    /// The reducing function is a closure with two arguments: an ‘accumulator’, and an element. For iterators with at least one element, this is the same as `fold()` with the first element of the iterator as the initial accumulator value, folding every subsequent element into it.
-    ///
-    /// @param callable(T, T): T $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter
-                    .reduce(|acc, x| {
-                        ZVal::from(call_cached(&mut callback, &[acc.inner, x.inner]))
-                    })
-                    .map(|x| x.inner)),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Tests if every element of the iterator matches a predicate.
-    ///
-    /// `all()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if they all return `true`, then so does `all()`. If any of them return `false`, it returns `false`.
-    ///
-    /// `all()` is short-circuiting; in other words, it will stop processing as soon as it finds a `false`, given that no matter what else happens, the result will also be `false`.
-    ///
-    /// An empty iterator returns `true`.
-    ///
-    /// # Panics
-    /// - If the closure does not return a boolean
-    ///
-    /// @param callable(T): bool $callback
-    /// @throws \LogicException
-    pub fn all(&mut self, callback: ZCallable) -> Result<bool, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.all(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Tests if any element of the iterator matches a predicate.
-    ///
-    /// `any()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if any of them return `true`, then so does `any()`. If they all return `false`, it returns `false`.
-    ///
-    /// `any()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`, given that no matter what else happens, the result will also be `true`.
-    ///
-    /// An empty iterator returns `false`.
-    ///
-    /// # Panics
-    /// - If the closure does not return a boolean
-    ///
-    /// @param callable(T): bool $callback
-    /// @throws \LogicException
-    pub fn any(&mut self, callback: ZCallable) -> Result<bool, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.any(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap())),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Searches for an element of an iterator that satisfies a predicate.
-    ///
-    /// `find()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if any of them return `true`, then `find()` returns the value. If they all return `false`, it returns `null`.
-    ///
-    /// `find()` is short-circuiting; in other words, it will stop processing as soon as the closure returns `true`.
-    ///
-    /// If you need the index of the element, see `position()`.
-    ///
-    /// # Panics
-    /// - If the closure does not return a boolean
-    ///
-    /// @param callable(T): bool $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn find(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.find(|x| {
-                    call_cached(&mut callback, &[x.inner.shallow_clone()])
-                        .bool()
-                        .unwrap()
-                })
-                .map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        })
-    }
-
-    /// Applies function to the elements of iterator and returns the first non-`null` result.
-    ///
-    /// `iter.find_map(f)` is equivalent to `iter.filter_map(f).next()`.
-    ///
-    /// @param callable(T): U|null $callback
-    /// @return U|null
-    /// @throws \LogicException
-    pub fn find_map(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.find_map(|x| {
-                    let res = call_cached(&mut callback, &[x.inner]);
-                    if res.is_null() {
-                        None
-                    } else {
-                        Some(res)
-                    }
-                })),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
     /// Searches for an element in an iterator, returning its index.
     ///
     /// `position()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, and if one of them returns `true`, then `position()` returns the index. If all of them return `false`, it returns `null`.
@@ -1117,180 +1273,30 @@ impl ArrayIterator {
         })
     }
 
-    /// Searches for an element in an iterator from the right, returning its index.
+    /// Reduces the elements to a single one, by repeatedly applying a reducing operation.
     ///
-    /// `rposition()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, starting from the end, and if one of them returns `true`, then rposition() returns the index. If all of them return `false`, it returns `null`.
+    /// If the iterator is empty, returns `null`; otherwise, returns the result of the reduction.
     ///
-    /// `rposition()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`.
+    /// The reducing function is a closure with two arguments: an ‘accumulator’, and an element. For iterators with at least one element, this is the same as `fold()` with the first element of the iterator as the initial accumulator value, folding every subsequent element into it.
     ///
-    /// # Panics
-    /// - If the closure does not return a boolean
-    ///
-    /// @param callable(T): bool $callback
-    /// @return int|null
-    /// @throws \LogicException
-    /// @throws \DomainException
-    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<usize>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            let mut callback = callback;
-            match_iter_type!(
-                iter,
-                iter.rposition(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap()),
-                IterBox::DoubleEndedExactSize,
-                _ => Err(IterError::Unsupported("rposition".to_string(), "DoubleEndedExactSize".to_string()))
-            )
-        })
-    }
-
-    /// Returns the maximum element of an iterator.
-    ///
-    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
-    ///
+    /// @param callable(T, T): T $callback
     /// @return T|null
     /// @throws \LogicException
-    pub fn max(&mut self) -> Result<Option<Zval>, IterError> {
+    pub fn reduce(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
+        let mut callback = callback;
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             match_iter_type!(
                 iter,
-                Ok(iter.max().map(|x| x.inner)),
+                Ok(iter
+                    .reduce(|acc, x| {
+                        ZVal::from(call_cached(&mut callback, &[acc.inner, x.inner]))
+                    })
+                    .map(|x| x.inner)),
                 IterBox::DoubleEndedExactSize
                     | IterBox::DoubleEnded
                     | IterBox::ExactSize
                     | IterBox::Iterator
             )
-        })
-    }
-
-    /// Returns the minimum element of an iterator.
-    ///
-    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
-    ///
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn min(&mut self) -> Result<Option<Zval>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                Ok(iter.min().map(|x| x.inner)),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            )
-        })
-    }
-
-    /// Returns the element that gives the maximum value from the specified function.
-    ///
-    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
-    ///
-    /// @param callable(T): U $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn max_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.max_by_key(|x| ZVal {
-                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
-                })
-                .map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        })
-    }
-
-    /// Returns the element that gives the maximum value with respect to the specified comparison function.
-    ///
-    /// If several elements are equally maximum, the last element is returned. If the iterator is empty, `null` is returned.
-    ///
-    /// # Panics
-    /// - If the comparison function does not return an integer
-    ///
-    /// @param callable(T, T): int $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn max_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.max_by(|x, y| {
-                    call_cached(
-                        &mut callback,
-                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
-                    )
-                    .long()
-                    .unwrap()
-                    .cmp(&0)
-                })
-                .map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        })
-    }
-
-    /// Returns the element that gives the minimum value from the specified function.
-    ///
-    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
-    ///
-    /// @param callable(T): U $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn min_by_key(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.min_by_key(|x| ZVal {
-                    inner: call_cached(&mut callback, &[x.inner.shallow_clone()])
-                })
-                .map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
-        })
-    }
-
-    /// Returns the element that gives the minimum value with respect to the specified comparison function.
-    ///
-    /// If several elements are equally minimum, the first element is returned. If the iterator is empty, `null` is returned.
-    ///
-    /// # Panics
-    /// - If the comparison function does not return an integer
-    ///
-    /// @param callable(T, T): int $callback
-    /// @return T|null
-    /// @throws \LogicException
-    pub fn min_by(&mut self, callback: ZCallable) -> Result<Option<Zval>, IterError> {
-        let mut callback = callback;
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            Ok(match_iter_type!(
-                iter,
-                iter.min_by(|x, y| {
-                    call_cached(
-                        &mut callback,
-                        &[x.inner.shallow_clone(), y.inner.shallow_clone()],
-                    )
-                    .long()
-                    .unwrap()
-                    .cmp(&0)
-                })
-                .map(|x| x.inner),
-                IterBox::DoubleEndedExactSize
-                    | IterBox::DoubleEnded
-                    | IterBox::ExactSize
-                    | IterBox::Iterator
-            ))
         })
     }
 
@@ -1317,302 +1323,32 @@ impl ArrayIterator {
         Ok(this)
     }
 
-    // TODO: unzip
-    // TODO: cycle
-    // TODO: sum
-    // TODO: product
-
-    /// Lexicographically compares the elements of this Iterator with those of another.
+    /// Searches for an element of an iterator from the back that satisfies a predicate.
     ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn cmp(&mut self, other: &mut ArrayIterator) -> Result<i8, IterError> {
-        self.iter
-            .as_mut()
-            .map_or(Err(IterError::Consumed), |iter| {
-                other
-                    .iter
-                    .as_mut()
-                    .map_or(Err(IterError::Consumed), |other| {
-                        match_iter_type!(
-                            iter,
-                            match_iter_type!(
-                                other,
-                                Ok(iter.cmp(other)),
-                                IterBox::DoubleEndedExactSize
-                                    | IterBox::DoubleEnded
-                                    | IterBox::ExactSize
-                                    | IterBox::Iterator
-                            ),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        )
-                    })
-            })
-            .map(|x| match x {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            })
-    }
-
-    /// Lexicographically compares the PartialOrd elements of this Iterator with those of another. The comparison works like short-circuit evaluation, returning a result without comparing the remaining elements. As soon as an order can be determined, the evaluation stops and a result is returned.
+    /// `rfind()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, starting at the end, and if any of them return `true`, then `rfind()` returns the element. If they all return `false`, it returns `null`.
     ///
-    /// @param self<T> $other
-    /// @return int|null
-    /// @throws \LogicException
-    pub fn partial_cmp(&mut self, other: &mut ArrayIterator) -> Result<Option<i8>, IterError> {
-        self.iter
-            .as_mut()
-            .map_or(Err(IterError::Consumed), |iter| {
-                other
-                    .iter
-                    .as_mut()
-                    .map_or(Err(IterError::Consumed), |other| {
-                        match_iter_type!(
-                            iter,
-                            match_iter_type!(
-                                other,
-                                Ok(iter.partial_cmp(other)),
-                                IterBox::DoubleEndedExactSize
-                                    | IterBox::DoubleEnded
-                                    | IterBox::ExactSize
-                                    | IterBox::Iterator
-                            ),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        )
-                    })
-            })
-            .map(|x| match x {
-                Some(std::cmp::Ordering::Less) => Some(-1),
-                Some(std::cmp::Ordering::Equal) => Some(0),
-                Some(std::cmp::Ordering::Greater) => Some(1),
-                None => None,
-            })
-    }
-
-    /// Determines if the elements of this Iterator are equal to those of another.
+    /// `rfind()` is short-circuiting; in other words, it will stop processing as soon as the closure returns `true`.
     ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn eq(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.eq(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    /// Determines if the elements of this Iterator are not equal to those of another.
-    ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn ne(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.ne(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    /// Determines if the elements of this Iterator are lexicographically less than those of another.
-    ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn lt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.lt(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    /// Determines if the elements of this Iterator are lexicographically less or equal to those of another.
-    ///
-    /// @param self<T> $other
-    /// @Throws \LogicException
-    pub fn le(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.le(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    /// Determines if the elements of this Iterator are lexicographically greater than those of another.
-    ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn gt(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.gt(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    /// Determines if the elements of this Iterator are lexicographically greater than or equal to those of another.
-    ///
-    /// @param self<T> $other
-    /// @throws \LogicException
-    pub fn ge(&mut self, other: &mut ArrayIterator) -> Result<bool, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            other
-                .iter
-                .as_mut()
-                .map_or(Err(IterError::Consumed), |other| {
-                    match_iter_type!(
-                        iter,
-                        match_iter_type!(
-                            other,
-                            Ok(iter.ge(other)),
-                            IterBox::DoubleEndedExactSize
-                                | IterBox::DoubleEnded
-                                | IterBox::ExactSize
-                                | IterBox::Iterator
-                        ),
-                        IterBox::DoubleEndedExactSize
-                            | IterBox::DoubleEnded
-                            | IterBox::ExactSize
-                            | IterBox::Iterator
-                    )
-                })
-        })
-    }
-
-    // DoubleEndedIterator
-    /// Removes and returns an element from the end of the iterator.
-    ///
-    /// Returns `null` when there are no more elements.
-    ///
+    /// @param callable(T): bool $callback
     /// @return T|null
     /// @throws \LogicException
     /// @throws \DomainException
-    pub fn next_back(&mut self) -> Result<Option<Zval>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+    fn rfind(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        callback: ZCallable,
+    ) -> Result<Option<Zval>, IterError> {
+        this.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+            let mut callback = callback;
             match_iter_type!(
                 iter,
-                iter.next_back().map(|x| x.inner),
+                iter.rfind(|x| {
+                    call_cached(&mut callback, &[x.inner.shallow_clone()]).bool().unwrap()
+                }).map(|x| x.inner),
                 IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
-                _ => Err(IterError::Unsupported("next_back".to_string(), "DoubleEnded".to_string()))
+                _ => Err(IterError::Unsupported("rfind".to_string(), "DoubleEnded".to_string()))
             )
         })
     }
-
-    /// Returns the `n`th element from the end of the iterator.
-    ///
-    /// This is essentially the reversed version of `nth()`. Although like most indexing operations, the count starts from zero, so `nth_back(0)` returns the first value from the end, `nth_back(1)` the second, and so on.
-    ///
-    /// Note that all elements between the end and the returned element will be consumed, including the returned element. This also means that calling `nth_back(0)` multiple times on the same iterator will return different elements.
-    ///
-    /// `nth_back()` will return `null` if `n` is greater than or equal to the length of the iterator.
-    ///
-    /// @return T|null
-    /// @throws \LogicException
-    /// @throws \DomainException
-    /// @throws \ArithmeticError
-    pub fn nth_back(&mut self, n: i64) -> Result<Option<Zval>, IterError> {
-        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
-                iter,
-                iter.nth_back(usize::try_from(n)?).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
-                _ => Err(IterError::Unsupported("nth_back".to_string(), "DoubleEnded".to_string()))
-            )
-        })
-    }
-
-    // TODO: try_rfold => needs error as value
 
     /// An iterator method that reduces the iterator’s elements to a single, final value, starting from the back.
     ///
@@ -1654,52 +1390,319 @@ impl ArrayIterator {
         })
     }
 
-    /// Searches for an element of an iterator from the back that satisfies a predicate.
+    /// Searches for an element in an iterator from the right, returning its index.
     ///
-    /// `rfind()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, starting at the end, and if any of them return `true`, then `rfind()` returns the element. If they all return `false`, it returns `null`.
+    /// `rposition()` takes a closure that returns `true` or `false`. It applies this closure to each element of the iterator, starting from the end, and if one of them returns `true`, then rposition() returns the index. If all of them return `false`, it returns `null`.
     ///
-    /// `rfind()` is short-circuiting; in other words, it will stop processing as soon as the closure returns `true`.
+    /// `rposition()` is short-circuiting; in other words, it will stop processing as soon as it finds a `true`.
+    ///
+    /// # Panics
+    /// - If the closure does not return a boolean
     ///
     /// @param callable(T): bool $callback
-    /// @return T|null
+    /// @return int|null
     /// @throws \LogicException
     /// @throws \DomainException
-    fn rfind(
-        #[this] this: &mut ZendClassObject<ArrayIterator>,
-        callback: ZCallable,
-    ) -> Result<Option<Zval>, IterError> {
-        this.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
+    pub fn rposition(&mut self, callback: ZCallable) -> Result<Option<usize>, IterError> {
+        self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
             let mut callback = callback;
             match_iter_type!(
                 iter,
-                iter.rfind(|x| {
-                    call_cached(&mut callback, &[x.inner.shallow_clone()]).bool().unwrap()
-                }).map(|x| x.inner),
-                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded,
-                _ => Err(IterError::Unsupported("rfind".to_string(), "DoubleEnded".to_string()))
+                iter.rposition(|x| call_cached(&mut callback, &[x.inner]).bool().unwrap()),
+                IterBox::DoubleEndedExactSize,
+                _ => Err(IterError::Unsupported("rposition".to_string(), "DoubleEndedExactSize".to_string()))
             )
         })
     }
 
-    // ExactSizeIterator
-    /// Returns the exact remaining length of the iterator.
+    /// Returns the bounds on the remaining length of the iterator.
     ///
-    /// The implementation ensures that the iterator will return exactly `len()` more times a `T` value, before returning `null`. This method has a default implementation, so you usually should not implement it directly. However, if you can provide a more efficient implementation, you can do so. See the trait-level docs for an example.
+    /// Specifically, size_hint() returns a tuple where the first element is the lower bound, and the second element is the upper bound.
     ///
-    /// This function has the same safety guarantees as the `size_hint()` function.
+    /// The second half of the tuple that is returned is an Option<usize>. A None here means that either there is no known upper bound, or the upper bound is larger than usize.
+    ///
+    /// # Implementation notes
+    /// It is not enforced that an iterator implementation yields the declared number of elements. A buggy iterator may yield less than the lower bound or more than the upper bound of elements.
+    ///
+    /// size_hint() is primarily intended to be used for optimizations such as reserving space for the elements of the iterator, but must not be trusted to e.g., omit bounds checks in unsafe code. An incorrect implementation of size_hint() should not lead to memory safety violations.
+    ///
+    /// That said, the implementation should provide a correct estimation, because otherwise it would be a violation of the trait’s protocol.
+    ///
+    /// The default implementation returns (0, None) which is correct for any iterator.
+    ///
+    /// @return array{int, int|null}
     /// @throws \LogicException
-    /// @throws \DomainException
-    /// @throws \ArithmeticError
-    fn len(&mut self) -> Result<i64, IterError> {
+    /// @throws \Exception
+    pub fn size_hint(&mut self) -> Result<ZBox<ZendHashTable>, IterError> {
         self.iter.as_mut().map_or(Err(IterError::Consumed), |iter| {
-            match_iter_type!(
+            let size_hint = match_iter_type!(
                 iter,
-                iter.len().try_into()?,
-                IterBox::DoubleEndedExactSize | IterBox::ExactSize,
-                _ => Err(IterError::Unsupported("len".to_string(), "ExactSize".to_string()))
-            )
+                iter.size_hint(),
+                IterBox::DoubleEndedExactSize
+                    | IterBox::DoubleEnded
+                    | IterBox::ExactSize
+                    | IterBox::Iterator
+            );
+
+            let (lower, upper) = size_hint;
+            let mut map = ZendHashTable::new();
+            map.push(lower)?;
+            map.push(upper.map_or(Ok(Zval::new()), |upper| {
+                let mut val = Zval::new();
+                val.set_long(i64::try_from(upper)?);
+                Ok::<Zval, IterError>(val)
+            })?)?;
+
+            Ok(map)
         })
     }
+
+    /// Creates an iterator that skips the first `n` elements.
+    ///
+    /// `skip(n)` skips elements until `n` elements are skipped or the end of the iterator is reached (whichever happens first). After that, all the remaining elements are yielded. In particular, if the original iterator is too short, then the returned iterator is empty.
+    ///
+    /// Note: If a previous step has resulted in an error, it will be silently skipped and never thrown.
+    ///
+    /// @return self<T>
+    /// @throws \LogicException
+    /// @throws \ArithmeticError
+    pub fn skip(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        n: i64,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.skip(usize::try_from(n)?)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// Creates an iterator that skips elements based on a predicate.
+    ///
+    /// `skip_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and ignore elements until it returns `false`.
+    ///
+    /// After `false` is returned, `skip_while()`’s job is over, and the rest of the elements are yielded.
+    ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
+    /// @param callable(T): bool $callback
+    /// @return self<T>
+    /// @throws \LogicException
+    pub fn skip_while(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        callback: ZCallable,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        let mut callback = callback;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.skip_while(move |x| {
+                call_cached(&mut callback, &[x.inner.shallow_clone()])
+                    .bool()
+                    .unwrap()
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// Creates an iterator starting at the same point, but stepping by the given amount at each iteration.
+    ///
+    /// Note 1: The first element of the iterator will always be returned, regardless of the step given.
+    ///
+    /// Note 2: The time at which ignored elements are pulled is not fixed. StepBy behaves like the sequence `self.next()`, `self.nth(step-1)`, `self.nth(step-1)`, …, but is also free to behave like the sequence `advance_n_and_return_first(&mut self, step)`, `advance_n_and_return_first(&mut self, step)`, … Which way is used may change for some iterators for performance reasons. The second way will advance the iterator earlier and may consume more items.
+    ///
+    /// # Panics
+    /// The method will panic if the given step is 0.
+    ///
+    /// @param positive-int $step
+    /// @return self<T>
+    /// @throws \LogicException
+    /// @throws \ValueError
+    /// @throws \ArithmeticError
+    pub fn step_by(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        step: i64,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        if step == 0 {
+            return Err(IterError::ArgumentError(format!(
+                "Step must be greater than 0, {step} given"
+            )));
+        }
+
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.step_by(usize::try_from(step)?)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// Creates an iterator that yields the first `n` elements, or fewer if the underlying iterator ends sooner.
+    ///
+    /// `take(n)` yields elements until `n` elements are yielded or the end of the iterator is reached (whichever happens first). The returned iterator is a prefix of length `n` if the original iterator contains at least `n` elements, otherwise it contains all of the (fewer than `n`) elements of the original iterator.
+    ///
+    /// @return self<T>
+    /// @throws \LogicException
+    /// @throws \ArithmeticError
+    pub fn take(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        n: i64,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.take(usize::try_from(n)?)),
+            IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+            IterBox::ExactSize => IterBox::ExactSize,
+            IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// Creates an iterator that yields elements based on a predicate.
+    ///
+    /// `take_while()` takes a closure as an argument. It will call this closure on each element of the iterator, and yield elements while it returns `true`.
+    ///
+    /// After `false` is returned, `take_while()`’s job is over, and the rest of the elements are ignored.
+    ///
+    /// # Panics
+    /// - If the closure does not return a boolean
+    ///
+    /// @param callable(T): bool $callback
+    /// @return self<T>
+    /// @throws \LogicException
+    pub fn take_while(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        callback: ZCallable,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        let mut callback = callback;
+        this.iter = Some(match_iter_result_type!(
+            iter,
+            Box::new(iter.take_while(move |x| {
+                call_cached(&mut callback, &[x.inner.shallow_clone()])
+                    .bool()
+                    .unwrap()
+            })),
+            IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    /// ‘Zips up’ two iterators into a single iterator of pairs.
+    ///
+    /// `zip()` returns a new iterator that will iterate over two other iterators, returning a tuple where the first element comes from the first iterator, and the second element comes from the second iterator.
+    ///
+    /// In other words, it zips two iterators together, into a single one.
+    ///
+    /// If either iterator returns `null`, `next()` from the zipped iterator will return `null`. If the zipped iterator has no more elements to return then each further attempt to advance it will first try to advance the first iterator at most one time and if it still yielded an item try to advance the second iterator at most one time.
+    ///
+    /// To ‘undo’ the result of zipping up two iterators, see `unzip`.
+    ///
+    /// # Panics
+    /// - The iterator panics if adding the values to the new array fails.
+    /// - The iterator panics if allocating the new array fails.
+    ///
+    /// @param self<U> $other
+    /// @return self<array{T, U}>
+    /// @throws \LogicException
+    /// @throws \ValueError
+    pub fn zip(
+        #[this] this: &mut ZendClassObject<ArrayIterator>,
+        other: ZIterRS,
+    ) -> Result<&mut ZendClassObject<ArrayIterator>, IterError> {
+        let iter = this.iter.take().ok_or(IterError::Moved)?;
+        let mut other_iterator = other.clone();
+        let other_iterator = ZendClassObject::<ArrayIterator>::from_zend_obj_mut(
+            other_iterator.inner.object_mut().ok_or(IterError::Moved)?,
+        )
+        .ok_or(IterError::ArgumentError("other".to_string()))?;
+
+        this.iter = Some(match_nested_iter_type!(
+            iter,
+            other_iterator,
+            other_iterator.iter.take().ok_or(anyhow::anyhow!("Iterator is not valid"))?,
+            Box::new(iter.zip(other_iterator).map(
+                |(x, y)| {
+                    let mut arr = ZendHashTable::new();
+                    arr.push(x.inner).unwrap();
+                    arr.push(y.inner).unwrap();
+                    arr.into_zval(false).unwrap().into()
+                },
+            )),
+            IterBox::DoubleEndedExactSize:
+                IterBox::DoubleEndedExactSize => IterBox::DoubleEndedExactSize,
+                IterBox::ExactSize => IterBox::ExactSize,
+                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
+            IterBox::ExactSize:
+                IterBox::DoubleEndedExactSize | IterBox::ExactSize => IterBox::ExactSize,
+                IterBox::DoubleEnded | IterBox::Iterator => IterBox::Iterator;
+            IterBox::DoubleEnded | IterBox::Iterator:
+                IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator => IterBox::Iterator
+        ));
+
+        Ok(this)
+    }
+
+    // TODO: peekable
+
+    // TODO: scan
+    // fn scan(
+    //     #[this] this: &mut ZendClassObject<ArrayIterator>,
+    //     initial: ZVal,
+    //     callback: ZCallable,
+    // ) -> &mut ZendClassObject<ArrayIterator> {
+    //     this.chain.push(Iter::Scan {
+    //         initial: initial.inner,
+    //         callback,
+    //     });
+    //     this.double_ended = false;
+    //     this.exact_size = false;
+    //     this
+    // }
+
+    // TODO: wait for stable
+    // pub fn collect_into(&mut self, collection: &mut Zval) -> Result<()> {
+    //     let arr: &mut ZendHashTable = collection.array_mut().unwrap();
+    //     self.iter.as_mut().map_or(Err(anyhow::anyhow!("Iterator is not valid. This is most likely because the iterator has already been consumed.")), |iter| {
+    //         match_iter_type!(
+    //             iter,
+    //             for x in iter {
+    //                 arr.push(x.inner);
+    //             },
+    //             IterBox::DoubleEndedExactSize | IterBox::DoubleEnded | IterBox::ExactSize | IterBox::Iterator
+    //         )
+    //     })
+    // }
+
+    // TODO: try_fold
+    // TODO: try_for_each
+
+    // TODO: unzip
+    // TODO: cycle
+    // TODO: sum
+    // TODO: product
+
+
+    // DoubleEndedIterator
+
+    // TODO: try_rfold => needs error as value
+
+    // ExactSizeIterator
 }
 
 trait DoubleEndedExactSizeIterator: DoubleEndedIterator + ExactSizeIterator + Iterator {}

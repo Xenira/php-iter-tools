@@ -16,9 +16,10 @@ Please view the readme on the github page: https://github.com/xenira/php-iter-to
 
 NOTE: The original php implementation is discontinued, as the performance is not good enough. This project is now a php extension, implementing the rust iterator interface.
 
-Blazingly fast :fire: PHP iterators, inspired by :crab: iterators.
+Blazingly :fire: fast :rocket: PHP iterators, inspired by :crab: iterators.
 
-Currently not all methods are implemented, but the most important ones are. Use with caution.
+Currently not all methods are implemented, but the most important ones are. See <<Implemented methods>> for a list of implemented methods.
+Use with caution.
 
 Performance for operations, that have a c equivalent in php, it is around 1.6x slower, but compared to pure php, it is around 1.4-4x faster. In addition to that iterators are lazy, which is not possible with the c functions in php. For example, if you only need the first match in an iterator chain this can be a lot faster and consume less memory.
 
@@ -41,7 +42,247 @@ $iterator = \Iter::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 assert($iterator->collect() === [4, 8, 12, 16]);
 ```
 
-== Benchmarks
+== Implemented methods
+[horizontal]
+✔️:: Implemented
+🔬:: Experimental methods. Not yet supported.
+⚠️:: Implemented but differs
+❌:: Not implemented
+
+.Std Rust Iterator methods
+[options="header", cols="2h,1,5"]
+|===
+| Method | Status | Comment
+| advance_by | 🔬 | This is a nightly-only experimental API. (`iter_advance_by` https://github.com/rust-lang/rust/issues/77404[#77404])
+| advance_by_back | ✔️ |
+| all | ✔️ |
+| any | ✔️ |
+| array_chunks | 🔬 | This is a nightly-only experimental API. (`iter_array_chunks` https://github.com/rust-lang/rust/issues/100450[#100450])
+| by_ref | ❌ | Does not apply to php
+| chain | ✔️ |
+| cloned | ❌ | Does not apply to php
+| collect | ✔️ |
+| collect_into | 🔬 | This is a nightly-only experimental API. (`iter_collect_into` https://github.com/rust-lang/rust/issues/94780[#94780])
+| cnt | ✔️ |
+| copied | ❌ | Does not apply to php
+| count | ✔️ |
+| cycle | ❌ | Currently not cloneable, which is required for cycle
+| enumerate | ✔️ |
+| eq | ✔️ |
+| eq_by | 🔬 | This is a nightly-only experimental API. (`iter_order_by` https://github.com/rust-lang/rust/issues/64295[#64295])
+| filter | ✔️ |
+| filter_map | ✔️ |
+| find | ✔️ |
+| find_map | ✔️ |
+| flat_map | ✔️ |
+| flatten | ✔️ |
+| fold | ✔️ |
+| for_each | ✔️ |
+| fuse | ✔️ | Seems to be a noop. Still present, for what its worth.
+| ge | ✔️ |
+| gt | ✔️ |
+| inspect | ✔️ |
+| intersperse | 🔬 | This is a nightly-only experimental API. (`iter_intersperse` https://github.com/rust-lang/rust/issues/79524[#79524])
+| intersperse_with | 🔬 | This is a nightly-only experimental API. (`iter_intersperse` https://github.com/rust-lang/rust/issues/79524[#79524])
+| is_empty | 🔬 | This is a nightly-only experimental API. (`exact_size_is_empty` https://github.com/rust-lang/rust/issues/35428[#35428])
+| is_partitioned | 🔬 | This is a nightly-only experimental API. (`iter_is_partitioned` https://github.com/rust-lang/rust/issues/62544[#62544])
+| is_sorted | 🔬 | This is a nightly-only experimental API. (`is_sorted` https://github.com/rust-lang/rust/issues/53485[#53485])
+| is_sorted_by | 🔬 | This is a nightly-only experimental API. (`is_sorted` https://github.com/rust-lang/rust/issues/53485[#53485])
+| is_sorted_by_key | 🔬 | This is a nightly-only experimental API. (`is_sorted` https://github.com/rust-lang/rust/issues/53485[#53485])
+| last | ✔️ |
+| le | ✔️ |
+| len | ✔️ |
+| lt | ✔️ |
+| map | ✔️ |
+| map_while | ✔️ |
+| map_windows | 🔬 | This is a nightly-only experimental API. (`iter_map_windows` https://github.com/rust-lang/rust/issues/87155[#87155])
+| max | ✔️ |
+| max_by | ✔️ |
+| max_by_key | ✔️ |
+| min | ✔️ |
+| min_by | ✔️ |
+| min_by_key | ✔️ |
+| ne | ✔️ |
+| next | ✔️ |
+| next_back | ✔️ |
+| next_chunk | 🔬 | This is a nightly-only experimental API. (`iter_next_chunk` https://github.com/rust-lang/rust/issues/98326[#98326])
+| nth | ✔️ |
+| nth_back | ✔️ |
+| partial_cmp | ✔️ |
+| partial_cmp_by | 🔬 | This is a nightly-only experimental API. (`iter_order_by` https://github.com/rust-lang/rust/issues/64295[#64295])
+| partition | ✔️ |
+| partition_in_place | 🔬 | This is a nightly-only experimental API. (`iter_partition_in_place` https://github.com/rust-lang/rust/issues/62543[#62543])
+| peekable | ❌ |
+| position | ✔️ |
+| product | ❌ |
+| reduce | ✔️ |
+| rev | ✔️ |
+| rfind | ✔️ |
+| rfold | ✔️ |
+| rposition | ✔️ |
+| scan | ❌ |
+| size_hint | ✔️ |
+| skip | ✔️ |
+| skip_while | ✔️ |
+| step_by | ✔️ |
+| sum | ❌ |
+| take | ✔️ |
+| take_while | ✔️ |
+| try_collect | 🔬 | This is a nightly-only experimental API. (`iterator_try_collect` https://github.com/rust-lang/rust/issues/94047[#94047])
+| try_find | 🔬 | This is a nightly-only experimental API. (`try_find` https://github.com/rust-lang/rust/issues/93178[#63178])
+| try_fold | ❌ |
+| try_for_each | ❌ |
+| try_reduce | 🔬 | This is a nightly-only experimental API. (`iterator_try_reduce` https://github.com/rust-lang/rust/issues/87053[#87053])
+| try_rfold | ❌ |
+| unzip | ❌ |
+| zip | ✔️ |
+|===
+
+.Itertools methods
+[options="header", cols="2h,1,5"]
+|===
+| Method | Status | Comment
+| all_equal | ❌ |
+| all_equal_value | ❌ |
+| all_unique | ❌ |
+| at_most | ❌ |
+| at_most_one | ❌ |
+| batching | ❌ |
+| cartesian_product | ❌ |
+| chunk_by | ❌ |
+| chunks | ❌ |
+| circular_tuple_windows | ❌ |
+| coalesce | ❌ |
+| collect_tuple | ❌ |
+| collect_vec | ❌ |
+| combinations | ❌ |
+| combinations_with_replacement | ❌ |
+| concat | ❌ |
+| contains | ❌ |
+| counts | ❌ |
+| counts_by | ❌ |
+| dedup | ❌ |
+| dedup_by | ❌ |
+| dedup_by_with_count | ❌ |
+| dedup_with_count | ❌ |
+| dropping | ❌ |
+| dropping_back | ❌ |
+| duplicates | ❌ |
+| duplicates_by | ❌ |
+| exactly_one | ❌ |
+| filter_map_ok | ❌ |
+| filter_ok | ❌ |
+| find_or_first | ❌ |
+| find_or_last | ❌ |
+| find_position | ❌ |
+| flatten_ok | ❌ |
+| fold1 | ❌ | Deprecated since 0.10.2: Use `Iterator::reduce` instead
+| fold_ok | ❌ |
+| fold_options | ❌ |
+| fold_while | ❌ |
+| format | ❌ |
+| format_with | ❌ |
+| get | ❌ |
+| group_by | ❌ |
+| interleave | ❌ |
+| interleave_shortest | ❌ |
+| intersperse | ❌ |
+| intersperse_with | ❌ |
+| into_group_map | ❌ |
+| into_group_map_by | ❌ |
+| into_grouping_map | ❌ |
+| into_grouping_map_by | ❌ |
+| join | ❌ |
+| k_largest | ❌ |
+| k_largest_by | ❌ |
+| k_largest_by_key | ❌ |
+| k_smallest | ❌ |
+| k_smallest_by | ❌ |
+| k_smallest_by_key | ❌ |
+| kmerge | ❌ |
+| kmerge_by | ❌ |
+| map_into | ❌ |
+| map_ok | ❌ |
+| max_set | ❌ |
+| max_set_by | ❌ |
+| max_set_by_key | ❌ |
+| merge | ❌ |
+| merge_by | ❌ |
+| merge_join_by | ❌ |
+| min_set | ❌ |
+| min_set_by | ❌ |
+| min_set_by_key | ❌ |
+| minmax | ❌ |
+| minmax_by | ❌ |
+| minmax_by_key | ❌ |
+| multi_cartesian_product | ❌ |
+| multipeek | ❌ |
+| multiunzip | ❌ |
+| next_tuple | ❌ |
+| pad_using | ❌ |
+| partition_map | ❌ |
+| partition_result | ❌ |
+| peeking_take_while | ❌ |
+| permutations | ❌ |
+| position_max | ❌ |
+| position_max_by | ❌ |
+| position_max_by_key | ❌ |
+| position_min | ❌ |
+| position_min_by | ❌ |
+| position_min_by_key | ❌ |
+| position_maximum | ❌ |
+| position_maximum_by | ❌ |
+| position_maximum_by_key | ❌ |
+| positions | ❌ |
+| powerset | ❌ |
+| process_results | ❌ |
+| product1 | ❌ |
+| set_from | ❌ |
+| sorted | ❌ |
+| sorted_by | ❌ |
+| sorted_by_cached_key | ❌ |
+| sorted_by_key | ❌ |
+| sorted_unstable | ❌ |
+| sorted_unstable_by | ❌ |
+| sorted_unstable_by_key | ❌ |
+| sum1 | ❌ |
+| tail | ❌ |
+| take_while_inclusive | ❌ |
+| take_while_ref | ❌ |
+| tee | ❌ |
+| tree_fold1 | ❌ | Deprecated since 0.13.0: Use .tree_reduce() instead
+| tree_reduce | ❌ |
+| try_collect | ❌ |
+| try_len | ❌ |
+| tuple_combinations | ❌ |
+| tuple_windows | ❌ |
+| tuples | ❌ |
+| unique | ❌ |
+| unique_by | ❌ |
+| update | ❌ |
+| while_some | ❌ |
+| with_position | ❌ |
+| zip_eq | ❌ |
+| zip_longest | ❌ |
+|===
+
+== Not implemented
+
+=== Peekable<I>
+- peek
+- peek_mut
+- next_if
+- next_if_eq
+
+== Performance
+Generally the performance is better than php iterators, but worse than the native php functions (like `array_map`). Those are implemented in c and use simple for loops which makes them faster.
+
+The lazy evaluation of iterators can be a big advantage, as you can stop the iteration at any point and don't have to iterate over the whole array.
+In addition to that, the memory consumption can be lower, as you don't have to store the whole array in memory (when having large intermediate objects).
+
+If performance is a concern, you should always benchmark your code and compare the different implementations. Otherwise the improved readability and developer experience of iterators might be worth the performance tradeoff even in cases where the native php functions might be slightly faster.
+
+=== Benchmarks
 
 .Map 10_000 elements (`val * 2`)
 

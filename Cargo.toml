@@ -16,7 +16,7 @@ name = "ext_itertools"
 [dependencies]
 anyhow = "1.0.82"
 dyn-clone = "1.0.17"
-ext-php-rs = { path = "../ext-php-rs/", features = ["anyhow"] }
+ext-php-rs = { git = "https://github.com/Xenira/ext-php-rs", branch = "fci-fcc-bindings", features = ["anyhow"] }
 itertools = { git = "https://github.com/rust-itertools/itertools" }
 thiserror = "1.0.61"
 

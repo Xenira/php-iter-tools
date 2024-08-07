@@ -351,6 +351,7 @@ dependencies = [
 [[package]]
 name = "ext-php-rs"
 version = "0.12.0"
+source = "git+https://github.com/Xenira/ext-php-rs?branch=fci-fcc-bindings#a6a488df04b4e70489bb8096db6f51532237420b"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -369,6 +370,7 @@ dependencies = [
 [[package]]
 name = "ext-php-rs-derive"
 version = "0.10.1"
+source = "git+https://github.com/Xenira/ext-php-rs?branch=fci-fcc-bindings#a6a488df04b4e70489bb8096db6f51532237420b"
 dependencies = [
  "anyhow",
  "darling",
